@@ -67,6 +67,15 @@ const GROUPS: { title: string; fields: Field[] }[] = [
           ['off', 'Off'],
         ],
       },
+      {
+        kind: 'segment',
+        key: 'splitAllowed',
+        label: 'Split allowed',
+        options: [
+          ['true', 'On'],
+          ['false', 'Off'],
+        ],
+      },
     ],
   },
 ];
@@ -142,7 +151,7 @@ function buildField(f: Field): HTMLElement {
     label.removeAttribute('for');
     label.id = id;
     const seg = segmented(f.label, f.options, (v) =>
-      sendSetting({ [f.key]: f.key === 'dealerHitsSoft17' ? v === 'true' : v } as Partial<Settings>),
+      sendSetting({ [f.key]: f.key === 'dealerHitsSoft17' || f.key === 'splitAllowed' ? v === 'true' : v } as Partial<Settings>),
     );
     holder.append(seg.el);
     controls.push({ sync: (s, editable) => seg.set(String(s[f.key as keyof PublicSettings]), editable) });

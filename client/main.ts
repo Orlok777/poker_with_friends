@@ -124,9 +124,11 @@ function handle(msg: ServerMsg): void {
       return;
     }
     case 'round_result': {
-      const mine = msg.results.find((r) => r.playerId === app.myId);
-      if (mine?.outcome === 'win' || mine?.outcome === 'blackjack') playWin();
-      else if (mine?.outcome === 'loss') playLose();
+      // With a split there are two results: the sound follows the net result.
+      const mine = msg.results.filter((r) => r.playerId === app.myId);
+      const net = mine.reduce((sum, r) => sum + r.delta, 0);
+      if (net > 0) playWin();
+      else if (net < 0) playLose();
       return;
     }
     case 'kicked': {

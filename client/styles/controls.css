@@ -194,7 +194,7 @@
 .action-bar {
   width: min(720px, 100%);
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   animation: rise-in var(--t-fade) var(--ease);
 }
@@ -228,6 +228,10 @@
 
 .act-double {
   --c: var(--double);
+}
+
+.act-split {
+  --c: #a78bfa;
 }
 
 /* On my turn the enabled buttons light up. */
@@ -315,9 +319,10 @@
     display: none;
   }
 
+  /* Basis makes Confirm wrap onto its own row when the tool buttons leave too little room. */
   .confirm-btn,
   .bet-reset {
-    flex: 1;
+    flex: 1 1 160px;
     min-width: 0;
     height: 48px;
     padding: 0 14px;
@@ -328,7 +333,12 @@
   }
 
   .action-bar {
-    gap: 8px;
+    gap: 6px;
+  }
+
+  /* Four buttons share the width, and a phone has no keyboard for the shortcuts. */
+  .action-btn kbd {
+    display: none;
   }
 
   .action-btn {

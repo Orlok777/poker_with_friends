@@ -1,6 +1,6 @@
 // The felt: dealer at the top, my hand large at the bottom, other players on an arc between.
 
-import { isHiddenCard, type PlayerView, type PublicSettings, type TableState } from '../shared/types.js';
+import { isHiddenCard, type HandView, type PlayerView, type PublicSettings, type TableState } from '../shared/types.js';
 import { app, confirmKick, isHost, serverNow } from './app.js';
 import {
   betChip,
@@ -9,6 +9,7 @@ import {
   resultPill,
   ringEl,
   runCardAnimations,
+  setShownCards,
   slideFrom,
   tickRings,
   totalBadge,
@@ -36,6 +37,7 @@ export function resetTable(): void {
   lastDeadline = null;
   seenResults.clear();
   seenBets.clear();
+  handCounts.clear();
   resetCardMemory();
 }
 
@@ -51,7 +53,7 @@ function phaseText(s: TableState, self: PlayerView): { text: string; tone: '' | 
   switch (s.phase) {
     case 'betting':
       if (s.deadline === null) return { text: 'Waiting for players', tone: '', ring: false };
-      if (self.seat !== null && self.bet === 0 && self.chips >= s.settings.minBet) {
+      if (self.seat !== null && betOf(self) === 0 && self.chips >= s.settings.minBet) {
         return { text: 'Place your bet', tone: 'accent', ring: false }; // the bet panel has the ring
       }
       return { text: 'Waiting for bets', tone: '', ring: true };
@@ -73,47 +75,93 @@ function phaseText(s: TableState, self: PlayerView): { text: string; tone: '' | 
 
 // ------------------------------------------------------------------- hands
 
-function playerTotal(s: TableState, p: PlayerView): HTMLElement | null {
-  if (p.cards.length === 0) return null;
-  if (p.status === 'bust') return totalBadge(String(p.total), 'bust');
-  if (p.status === 'blackjack') return totalBadge('21', 'bj');
-  const final = p.status !== 'playing' || s.phase === 'settle';
-  return totalBadge(totalLabel(p.total, p.soft, final));
+/** A hand slot with nothing in it yet (before the deal, or when sitting out). */
+const NO_HAND: HandView = {
+  cards: [],
+  bet: 0,
+  total: 0,
+  soft: false,
+  status: 'none',
+  doubled: false,
+  allIn: false,
+  fromSplit: false,
+  canDouble: false,
+  outcome: null,
+  delta: null,
+};
+
+export function betOf(p: PlayerView): number {
+  return p.hands[0]?.bet ?? 0;
 }
 
-/** Cards plus the total badge (top right) and, on that player's turn, the countdown ring (top left). */
-function handBox(s: TableState, key: string, p: PlayerView, size: 'lg' | 'sm', counts: { added: number }): HTMLElement {
+function handTotal(s: TableState, hd: HandView): HTMLElement | null {
+  if (hd.cards.length === 0) return null;
+  if (hd.status === 'bust') return totalBadge(String(hd.total), 'bust');
+  if (hd.status === 'blackjack') return totalBadge('21', 'bj');
+  const final = hd.status !== 'playing' || s.phase === 'settle';
+  return totalBadge(totalLabel(hd.total, hd.soft, final));
+}
+
+/** Hand counts at the last render, to spot the moment a hand is split. */
+const handCounts = new Map<string, number>();
+
+/** The animation key of a player's hand: the first hand keeps the plain player id. */
+function handKey(p: PlayerView, i: number): string {
+  return i === 0 ? p.id : `${p.id}:${i}`;
+}
+
+/** When a hand has just been split, its first card was already on screen: only the new cards slide in. */
+function noteSplit(p: PlayerView): void {
+  const before = handCounts.get(p.id) ?? 0;
+  handCounts.set(p.id, p.hands.length);
+  if (before === 1 && p.hands.length === 2) {
+    setShownCards(handKey(p, 0), 1);
+    setShownCards(handKey(p, 1), 1);
+  }
+}
+
+/** Cards plus the total badge (top right) and, on that hand's turn, the countdown ring (top left). */
+function handBox(
+  s: TableState,
+  key: string,
+  hd: HandView,
+  size: 'lg' | 'sm',
+  counts: { added: number },
+  opts: { ring: boolean; active: boolean },
+): HTMLElement {
   const box = h('div', `hand-box size-${size}`);
-  const { el, added } = handEl(key, p.cards, !firstRender);
+  if (opts.active) box.classList.add('active-hand');
+  const { el, added } = handEl(key, hd.cards, !firstRender);
   counts.added += added;
   box.append(el);
-  const badge = playerTotal(s, p);
+  const badge = handTotal(s, hd);
   if (badge) box.append(badge);
-  if (size === 'lg' && s.turn === p.id && s.deadline !== null) box.append(ringEl('hand-ring'));
+  if (size === 'lg' && opts.ring && s.deadline !== null) box.append(ringEl('hand-ring'));
   return box;
 }
 
 /** The spot under a hand: the result once settled, else the bet chip. */
-function betSpot(s: TableState, p: PlayerView, pending: number): HTMLElement {
+function betSpot(s: TableState, p: PlayerView, index: number, pending: number): HTMLElement {
+  const hd = p.hands[index] ?? NO_HAND;
   const spot = h('div', 'bet-spot');
-  const result = resultPill(p);
+  const result = resultPill(hd);
   if (result) {
     spot.append(result);
-    const key = `${s.round}:${p.id}`;
+    const key = `${s.round}:${p.id}:${index}`;
     if (!seenResults.has(key)) {
       seenResults.add(key);
       if (!firstRender) result.classList.add('enter');
     }
     return spot;
   }
-  if (p.bet > 0) {
-    const chip = betChip(p.bet, { doubled: p.doubled, allIn: p.allIn });
+  if (hd.bet > 0) {
+    const chip = betChip(hd.bet, { doubled: hd.doubled, allIn: hd.allIn });
     spot.append(chip);
-    const key = `${s.round}:${p.id}:${p.bet}`;
+    const key = `${s.round}:${p.id}:${index}:${hd.bet}`;
     if (!seenBets.has(key)) {
       seenBets.add(key);
       if (!firstRender) {
-        if (p.id === app.myId && betSource) {
+        if (p.id === app.myId && index === 0 && betSource) {
           const from = betSource;
           requestAnimationFrame(() => slideFrom(chip, from));
           betSource = null;
@@ -192,7 +240,8 @@ function seatEl(s: TableState, p: PlayerView, counts: { added: number }): HTMLEl
   const seat = h('div', 'seat');
   if (s.turn === p.id) seat.classList.add('is-turn');
   if (!p.connected) seat.classList.add('away');
-  if (p.outcome) seat.classList.add(`outcome-${p.outcome === 'loss' ? 'loss' : 'other'}`);
+  const outcomes = p.hands.map((hd) => hd.outcome).filter((o) => o !== null);
+  if (outcomes.length > 0) seat.classList.add(`outcome-${outcomes.every((o) => o === 'loss') ? 'loss' : 'other'}`);
 
   const head = h('div', 'seat-head');
   if (s.turn === p.id && s.deadline !== null) head.append(ringEl('seat-ring'));
@@ -201,10 +250,24 @@ function seatEl(s: TableState, p: PlayerView, counts: { added: number }): HTMLEl
   if (!p.connected) head.append(h('span', 'tag', 'Away'));
   seat.append(head);
 
-  seat.append(handBox(s, p.id, p, 'sm', counts));
+  noteSplit(p);
+  const split = p.hands.length > 1;
+  const turnHere = s.turn === p.id;
+  const ids = split ? p.hands.map((_, i) => i) : [0];
+  const boxes = ids.map((i) =>
+    handBox(s, handKey(p, i), p.hands[i] ?? NO_HAND, 'sm', counts, { ring: false, active: split && turnHere && p.activeHand === i }),
+  );
+  if (split) {
+    const row = h('div', 'hands-row');
+    row.append(...boxes);
+    seat.append(row);
+    seat.classList.add('is-split');
+  } else {
+    seat.append(boxes[0]!);
+  }
 
   const foot = h('div', 'seat-foot');
-  foot.append(betSpot(s, p, 0), h('span', 'seat-chips num', fmt(p.chips)));
+  foot.append(...ids.map((i) => betSpot(s, p, i, 0)), h('span', 'seat-chips num', fmt(p.chips)));
   seat.append(foot);
 
   if (isHost()) {
@@ -238,20 +301,40 @@ function renderOthers(s: TableState, self: PlayerView, counts: { added: number }
 
 function renderMe(s: TableState, self: PlayerView, pendingBet: number, counts: { added: number }): void {
   const spot = $('my-spot');
-  spot.classList.toggle('is-turn', s.turn === self.id);
+  // With two hands only the hand being played is lit (see .active-hand), not the whole spot.
+  spot.classList.toggle('is-turn', s.turn === self.id && self.hands.length < 2);
   if (self.seat === null) {
     spot.replaceChildren(h('p', 'spot-note', "You're watching. You'll take a free seat when the next round starts."));
     return;
   }
+  noteSplit(self);
   const nodes: HTMLElement[] = [];
-  nodes.push(handBox(s, self.id, self, 'lg', counts));
-  const pending = s.phase === 'betting' && self.bet === 0 ? pendingBet : 0;
-  nodes.push(betSpot(s, self, pending));
+  const split = self.hands.length > 1;
+  const myTurn = s.turn === self.id;
+  if (split) {
+    // Both hands side by side, each with its own total, bet and result. The one being played is lit.
+    const row = h('div', myTurn ? 'hands-row has-active' : 'hands-row');
+    self.hands.forEach((hd, i) => {
+      const active = myTurn && self.activeHand === i;
+      const col = h('div', active ? 'hand-col active' : 'hand-col');
+      col.append(
+        handBox(s, handKey(self, i), hd, 'lg', counts, { ring: active, active }),
+        betSpot(s, self, i, 0),
+      );
+      row.append(col);
+    });
+    nodes.push(row);
+  } else {
+    nodes.push(handBox(s, self.id, self.hands[0] ?? NO_HAND, 'lg', counts, { ring: myTurn, active: false }));
+    const pending = s.phase === 'betting' && betOf(self) === 0 ? pendingBet : 0;
+    nodes.push(betSpot(s, self, 0, pending));
+  }
   const name = h('div', 'my-name');
   name.append(h('span', 'name', self.name), h('span', 'dot', '·'), h('span', 'num', `${fmt(self.chips)} chips`));
   nodes.push(name);
   spot.replaceChildren(...nodes);
-  spot.classList.toggle('no-cards', self.cards.length === 0);
+  spot.classList.toggle('is-split', split);
+  spot.classList.toggle('no-cards', (self.hands[0]?.cards.length ?? 0) === 0);
 }
 
 // -------------------------------------------------------------------- main
@@ -285,8 +368,8 @@ export function renderTable(s: TableState, self: PlayerView, pendingBet: number)
   if (!firstRender && counts.added > 0) playDeal();
   const prev = app.prevState;
   if (prev && s.phase === 'betting') {
-    const before = new Map(prev.players.map((p) => [p.id, p.bet]));
-    if (s.players.some((p) => p.bet > 0 && (before.get(p.id) ?? 0) === 0 && p.id !== app.myId)) playChip();
+    const before = new Map(prev.players.map((p) => [p.id, betOf(p)]));
+    if (s.players.some((p) => betOf(p) > 0 && (before.get(p.id) ?? 0) === 0 && p.id !== app.myId)) playChip();
   }
   firstRender = false;
   tick();

@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import type { ActionName, Card, ClientMsg, PlayerView, Rank, ServerMsg, Suit, TableState } from '../shared/types.js';
+import type { ActionName, Card, ClientMsg, HandView, PlayerView, Rank, ServerMsg, Suit, TableState } from '../shared/types.js';
 import { startServer, type RunningServer, type ServerOptions } from '../server/index.js';
 import type { Timing } from '../server/table.js';
 
@@ -37,6 +37,9 @@ export async function waitUntil(check: () => boolean, timeout = 4000, what = 'co
     await new Promise((r) => setTimeout(r, 10));
   }
 }
+
+/** The bet a player has placed for the coming round (0 when none). */
+export const betOf = (p: PlayerView): number => p.hands[0]?.bet ?? 0;
 
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -157,13 +160,13 @@ export class TestClient {
     return p;
   }
 
-  /** Plays by itself: bets when asked and picks an action with `policy` on its turn. */
-  autoPlay(bet: number, policy: (p: PlayerView, s: TableState) => ActionName): () => void {
+  /** Plays by itself: bets when asked and picks an action with `policy` for the hand being played. */
+  autoPlay(bet: number, policy: (hand: HandView, p: PlayerView, s: TableState) => ActionName): () => void {
     const done = new Set<string>();
     return this.onState((s) => {
       const p = s.players.find((x) => x.id === this.id);
       if (!p || this.closed) return;
-      if (s.phase === 'betting' && s.deadline !== null && p.seat !== null && p.bet === 0 && p.chips >= s.settings.minBet) {
+      if (s.phase === 'betting' && s.deadline !== null && p.seat !== null && betOf(p) === 0 && p.chips >= s.settings.minBet) {
         const key = `bet:${s.round}`;
         if (!done.has(key)) {
           done.add(key);
@@ -171,10 +174,12 @@ export class TestClient {
         }
       }
       if (s.phase === 'player_turns' && s.turn === this.id) {
-        const key = `act:${s.round}:${p.cards.length}`;
+        const hand = p.hands[p.activeHand];
+        if (!hand) return;
+        const key = `act:${s.round}:${p.activeHand}:${hand.cards.length}`;
         if (!done.has(key)) {
           done.add(key);
-          this.send({ type: 'action', action: policy(p, s) });
+          this.send({ type: 'action', action: policy(hand, p, s) });
         }
       }
     });

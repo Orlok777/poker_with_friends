@@ -1,6 +1,6 @@
 // Cards, hands, chips, result pills and countdown rings, plus their animations.
 
-import { isHiddenCard, type CardView, type PlayerView } from '../shared/types.js';
+import { isHiddenCard, type CardView, type HandView } from '../shared/types.js';
 import { $, fmt, h, prefersReducedMotion } from './dom.js';
 
 const SUIT_CHAR = { S: '♠', H: '♥', D: '♦', C: '♣' } as const;
@@ -34,6 +34,11 @@ const shownCount = new Map<string, number>();
 let holeWasHidden = false;
 const toDeal: HTMLElement[] = [];
 const toFlip: HTMLElement[] = [];
+
+/** Tells the animations that `n` cards of this hand are already on screen, e.g. the first card of a split hand. */
+export function setShownCards(key: string, n: number): void {
+  shownCount.set(key, n);
+}
 
 /** Forgets what was on screen, e.g. after leaving the table. */
 export function resetCardMemory(): void {
@@ -125,7 +130,7 @@ export function betChip(amount: number, opts: { doubled?: boolean; pending?: boo
 }
 
 /** WIN +100, BLACKJACK +150, PUSH, BUST −100 or LOSE −100. Null when the round is not settled. */
-export function resultPill(p: PlayerView): HTMLElement | null {
+export function resultPill(p: HandView): HTMLElement | null {
   if (!p.outcome) return null;
   const d = p.delta ?? 0;
   const amount = fmt(Math.abs(d));

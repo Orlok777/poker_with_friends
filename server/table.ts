@@ -13,11 +13,13 @@ import {
   type DealerView,
   type ErrorCode,
   type HandStatus,
+  type HandView,
   type LogEntry,
   type Outcome,
   type Phase,
   type PlayerView,
   type PublicSettings,
+  type RoundResultEntry,
   type ServerMsg,
   type Settings,
   type TableState,
@@ -25,6 +27,7 @@ import {
 import { Shoe, mulberry32, randomSeed } from './deck.js';
 import {
   canDouble,
+  canSplit,
   dealerShouldHit,
   handValue,
   isBlackjack,
@@ -75,6 +78,27 @@ export interface TableOptions {
   log?: (message: string) => void;
 }
 
+/** One hand of a round. A player has one hand, or two after a split. */
+interface Hand {
+  cards: Card[];
+  bet: number;
+  status: HandStatus;
+  doubled: boolean;
+  allIn: boolean;
+  fromSplit: boolean;
+  outcome: Outcome | null;
+  delta: number | null;
+}
+
+function newHand(bet: number, allIn = false): Hand {
+  return { cards: [], bet, status: 'none', doubled: false, allIn, fromSplit: false, outcome: null, delta: null };
+}
+
+/** Whether the player has placed a bet for the coming round. */
+function hasBet(p: { hands: Hand[] }): boolean {
+  return (p.hands[0]?.bet ?? 0) > 0;
+}
+
 interface Player {
   id: string;
   name: string;
@@ -87,14 +111,11 @@ interface Player {
   holdTimer: NodeJS.Timeout | null;
   /** Set when the player left, was kicked, or lost the seat hold while a hand is live. Removed after the round. */
   leaving: boolean;
-  bet: number;
-  cards: Card[];
-  status: HandStatus;
-  doubled: boolean;
-  allIn: boolean;
+  /** Empty until the player bets. The bet is hands[0].bet during betting; a split adds a second hand. */
+  hands: Hand[];
+  /** Index of the hand being played. */
+  activeHand: number;
   inRound: boolean;
-  outcome: Outcome | null;
-  delta: number | null;
 }
 
 const LOG_LIMIT = 30;
@@ -288,14 +309,9 @@ export class Table {
       conn,
       holdTimer: null,
       leaving: false,
-      bet: 0,
-      cards: [],
-      status: 'none',
-      doubled: false,
-      allIn: false,
+      hands: [],
+      activeHand: 0,
       inRound: false,
-      outcome: null,
-      delta: null,
     };
     this.players.set(p.id, p);
     this.bound.set(conn, p.id);
@@ -377,9 +393,9 @@ export class Table {
 
   private removePlayer(p: Player): void {
     // A bet placed for a round that has not been dealt is given back.
-    if (this.phase === 'betting' && p.bet > 0) {
-      p.chips += p.bet;
-      p.bet = 0;
+    if (this.phase === 'betting' && hasBet(p)) {
+      p.chips += p.hands[0]!.bet;
+      p.hands = [];
     }
     this.store.set(p.name, p.chips);
     this.store.save();
@@ -442,14 +458,9 @@ export class Table {
   // ---------------------------------------------------------------- betting
 
   private resetHand(p: Player): void {
-    p.bet = 0;
-    p.cards = [];
-    p.status = 'none';
-    p.doubled = false;
-    p.allIn = false;
+    p.hands = [];
+    p.activeHand = 0;
     p.inRound = false;
-    p.outcome = null;
-    p.delta = null;
   }
 
   private assignSeats(): void {
@@ -505,8 +516,8 @@ export class Table {
   /** Ends the betting phase early once every player who is able to bet has bet. */
   private checkBettingDone(): void {
     if (this.phase !== 'betting' || this.deadline === null) return;
-    const able = this.seatedInOrder().filter((p) => this.canBet(p) || p.bet > 0);
-    if (able.length > 0 && able.every((p) => p.bet > 0)) this.endBetting();
+    const able = this.seatedInOrder().filter((p) => this.canBet(p) || hasBet(p));
+    if (able.length > 0 && able.every((p) => hasBet(p))) this.endBetting();
   }
 
   private onPlaceBet(conn: Connection, p: Player, amount: unknown): void {
@@ -514,7 +525,7 @@ export class Table {
       return this.sendError(conn, 'wrong_phase', 'Bets are only taken during the betting phase');
     }
     if (p.seat === null) return this.sendError(conn, 'not_seated', 'You do not have a seat yet');
-    if (p.bet > 0) return this.sendError(conn, 'already_bet', 'You have already bet this round');
+    if (hasBet(p)) return this.sendError(conn, 'already_bet', 'You have already bet this round');
     if (typeof amount !== 'number' || !Number.isInteger(amount)) {
       return this.sendError(conn, 'bet_invalid', 'A bet must be a whole number');
     }
@@ -525,15 +536,14 @@ export class Table {
     if (amount > p.chips) return this.sendError(conn, 'insufficient_chips', 'You do not have enough chips');
     const allIn = amount === p.chips;
     p.chips -= amount;
-    p.bet = amount;
-    p.allIn = allIn;
+    p.hands = [newHand(amount, allIn)];
     this.addLog(allIn ? `${p.name} goes all in (${amount.toLocaleString('en-US')})` : `${p.name} bets ${amount}`);
     this.broadcast();
     this.checkBettingDone();
   }
 
   private onResetChips(conn: Connection, p: Player): void {
-    const ok = this.phase === 'waiting' || (this.phase === 'betting' && p.bet === 0);
+    const ok = this.phase === 'waiting' || (this.phase === 'betting' && !hasBet(p));
     if (!ok) {
       return this.sendError(conn, 'cannot_reset', 'Chips can only be reset in the waiting room or before you bet');
     }
@@ -546,7 +556,7 @@ export class Table {
 
   private endBetting(): void {
     this.clearFlow();
-    const active = this.seatedInOrder().filter((p) => p.bet > 0);
+    const active = this.seatedInOrder().filter((p) => hasBet(p));
     if (active.length === 0) {
       if (!this.noBetsLogged) this.addLog('No bets were placed');
       this.noBetsLogged = true;
@@ -561,7 +571,7 @@ export class Table {
 
   private cardsOnTable(): Card[] {
     const cards = [...this.dealerCards];
-    for (const p of this.players.values()) cards.push(...p.cards);
+    for (const p of this.players.values()) for (const hd of p.hands) cards.push(...hd.cards);
     return cards;
   }
 
@@ -581,10 +591,10 @@ export class Table {
     this.turn = null;
     this.round++;
     for (const p of this.players.values()) {
-      p.inRound = p.bet > 0;
-      p.status = p.inRound ? 'playing' : 'none';
+      p.inRound = hasBet(p);
+      for (const hd of p.hands) hd.status = 'playing';
     }
-    const dealPlayer = (p: Player) => () => p.cards.push(this.drawCard());
+    const dealPlayer = (p: Player) => () => p.hands[0]!.cards.push(this.drawCard());
     const dealDealer = () => this.dealerCards.push(this.drawCard());
     const steps = [
       ...active.map(dealPlayer),
@@ -604,8 +614,8 @@ export class Table {
 
   private afterDeal(active: Player[]): void {
     for (const p of active) {
-      if (isBlackjack(p.cards)) {
-        p.status = 'blackjack';
+      if (isBlackjack(p.hands[0]!.cards)) {
+        p.hands[0]!.status = 'blackjack';
         this.addLog(`${p.name} has blackjack`);
       }
     }
@@ -632,7 +642,7 @@ export class Table {
   }
 
   private advanceTurn(): void {
-    const next = this.activePlayers().find((p) => p.status === 'playing');
+    const next = this.activePlayers().find((p) => p.hands.some((hd) => hd.status === 'playing'));
     if (!next) {
       this.turn = null;
       this.deadline = null;
@@ -640,6 +650,7 @@ export class Table {
       return;
     }
     this.turn = next.id;
+    next.activeHand = next.hands.findIndex((hd) => hd.status === 'playing');
     if (next.leaving) return this.autoStand(next, 'left the table');
     this.armTurnTimer(next);
     this.broadcast();
@@ -661,10 +672,16 @@ export class Table {
   }
 
   private autoStand(p: Player, reason: string): void {
-    if (this.turn !== p.id || p.status !== 'playing') return;
-    p.status = 'stood';
-    this.addLog(`${p.name} ${reason} and stands on ${handValue(p.cards).total}`);
+    const hand = p.hands[p.activeHand];
+    if (this.turn !== p.id || !hand || hand.status !== 'playing') return;
+    hand.status = 'stood';
+    this.addLog(`${this.who(p)} ${reason} and stands on ${handValue(hand.cards).total}`);
     this.advanceTurn();
+  }
+
+  /** The player's name, plus which hand when they have split. */
+  private who(p: Player): string {
+    return p.hands.length > 1 ? `${p.name} (hand ${p.activeHand + 1})` : p.name;
   }
 
   private onAction(conn: Connection, p: Player, action: unknown): void {
@@ -672,55 +689,89 @@ export class Table {
       return this.sendError(conn, 'wrong_phase', 'Actions are only allowed during player turns');
     }
     if (this.turn !== p.id) return this.sendError(conn, 'not_your_turn', 'It is not your turn');
-    if (action !== 'hit' && action !== 'stand' && action !== 'double') {
-      return this.sendError(conn, 'bad_message', 'Action must be hit, stand or double');
+    if (action !== 'hit' && action !== 'stand' && action !== 'double' && action !== 'split') {
+      return this.sendError(conn, 'bad_message', 'Action must be hit, stand, double or split');
     }
     this.act(conn, p, action);
   }
 
   private act(conn: Connection, p: Player, action: ActionName): void {
+    const hand = p.hands[p.activeHand];
+    if (!hand || hand.status !== 'playing') return this.sendError(conn, 'action_not_allowed', 'You have no hand to play');
+    const who = this.who(p);
+
     if (action === 'stand') {
-      p.status = 'stood';
-      this.addLog(`${p.name} stands on ${handValue(p.cards).total}`);
+      hand.status = 'stood';
+      this.addLog(`${who} stands on ${handValue(hand.cards).total}`);
       return this.advanceTurn();
     }
 
+    if (action === 'split') return this.split(conn, p, hand);
+
     if (action === 'double') {
-      if (!canDouble(p.cards, this.settings.doubleRule, p.chips, p.bet)) {
+      if (!canDouble(hand.cards, this.settings.doubleRule, p.chips, hand.bet, hand.fromSplit)) {
         return this.sendError(conn, 'action_not_allowed', 'You can not double right now');
       }
-      p.chips -= p.bet;
-      p.bet *= 2;
-      p.doubled = true;
+      p.chips -= hand.bet;
+      hand.bet *= 2;
+      hand.doubled = true;
       const card = this.drawCard();
-      p.cards.push(card);
-      const { total } = handValue(p.cards);
-      this.addLog(`${p.name} doubles: ${rankText(card)}, total ${total}`);
+      hand.cards.push(card);
+      const { total } = handValue(hand.cards);
+      this.addLog(`${who} doubles: ${rankText(card)}, total ${total}`);
       if (total > 21) {
-        p.status = 'bust';
-        this.addLog(`${p.name} busts`);
+        hand.status = 'bust';
+        this.addLog(`${who} busts`);
       } else {
-        p.status = 'stood';
+        hand.status = 'stood';
       }
       return this.advanceTurn();
     }
 
     // hit
     const card = this.drawCard();
-    p.cards.push(card);
-    const { total } = handValue(p.cards);
-    this.addLog(`${p.name} hits: ${rankText(card)}, total ${total}`);
+    hand.cards.push(card);
+    const { total } = handValue(hand.cards);
+    this.addLog(`${who} hits: ${rankText(card)}, total ${total}`);
     if (total > 21) {
-      p.status = 'bust';
-      this.addLog(`${p.name} busts`);
+      hand.status = 'bust';
+      this.addLog(`${who} busts`);
       return this.advanceTurn();
     }
     if (total === 21) {
-      p.status = 'stood';
+      hand.status = 'stood';
       return this.advanceTurn();
     }
     this.armTurnTimer(p); // every decision gets a fresh timer
     this.broadcast();
+  }
+
+  /** Splits a pair into two hands, each with a second card. Only one split per round, no re-splitting. */
+  private split(conn: Connection, p: Player, hand: Hand): void {
+    if (!canSplit(hand.cards, this.settings.splitAllowed, p.chips, hand.bet, p.hands.length > 1)) {
+      return this.sendError(conn, 'action_not_allowed', 'You can not split right now');
+    }
+    const [first, second] = hand.cards as [Card, Card];
+    p.chips -= hand.bet;
+    const right = newHand(hand.bet);
+    hand.cards = [first];
+    hand.fromSplit = true;
+    right.cards = [second];
+    right.fromSplit = true;
+    right.status = 'playing';
+    p.hands.push(right);
+    this.addLog(`${p.name} splits ${rankText(first)}s`);
+
+    // The left hand gets its card first, then the right hand.
+    for (const hd of p.hands) hd.cards.push(this.drawCard());
+    const acesSplit = first.rank === 'A';
+    p.hands.forEach((hd, i) => {
+      const { total } = handValue(hd.cards);
+      this.addLog(`${p.name} (hand ${i + 1}): ${hd.cards.map(rankText).join(' ')}, total ${total}`);
+      // Split aces get exactly one card each and stand. A 21 is a normal 21 and stands too.
+      if (acesSplit || total === 21) hd.status = 'stood';
+    });
+    this.advanceTurn(); // the left hand if it is still playing, else the right hand, else the next player
   }
 
   // ------------------------------------------------------------ dealer turn
@@ -733,7 +784,7 @@ export class Table {
     this.broadcast();
 
     // If every player busted or has blackjack, there is nothing left to beat.
-    const needsDraw = this.activePlayers().some((p) => p.status === 'stood');
+    const needsDraw = this.activePlayers().some((p) => p.hands.some((hd) => hd.status === 'stood'));
     const step = () => {
       if (needsDraw && dealerShouldHit(this.dealerCards, this.settings.dealerHitsSoft17)) {
         const card = this.drawCard();
@@ -759,16 +810,19 @@ export class Table {
     this.deadline = null;
     this.dealerRevealed = true;
 
-    const results: { playerId: string; name: string; outcome: Outcome; delta: number }[] = [];
+    const results: RoundResultEntry[] = [];
     for (const p of this.activePlayers()) {
-      if (p.status === 'playing') p.status = 'stood';
-      const s = settleHand(p.cards, this.dealerCards, p.bet, this.settings.blackjackPayout);
-      // The bet was taken when it was placed, so the bet and the winnings come back together.
-      p.chips += p.bet + s.delta;
-      p.outcome = s.outcome;
-      p.delta = s.delta;
-      results.push({ playerId: p.id, name: p.name, outcome: s.outcome, delta: s.delta });
-      this.addLog(`${p.name} ${describeOutcome(s.outcome, s.delta)}`);
+      p.hands.forEach((hd, i) => {
+        if (hd.status === 'playing') hd.status = 'stood';
+        const r = settleHand(hd.cards, this.dealerCards, hd.bet, this.settings.blackjackPayout, hd.fromSplit);
+        // The bet was taken when it was placed, so the bet and the winnings come back together.
+        p.chips += hd.bet + r.delta;
+        hd.outcome = r.outcome;
+        hd.delta = r.delta;
+        results.push({ playerId: p.id, name: p.name, hand: i, outcome: r.outcome, delta: r.delta });
+        const name = p.hands.length > 1 ? `${p.name} (hand ${i + 1})` : p.name;
+        this.addLog(`${name} ${describeOutcome(r.outcome, r.delta)}`);
+      });
     }
     for (const p of this.players.values()) this.store.set(p.name, p.chips);
     this.store.save();
@@ -825,8 +879,27 @@ export class Table {
     return { ...rest, passwordSet: password !== '' };
   }
 
+  private handView(p: Player, hd: Hand, index: number): HandView {
+    const { total, soft } = handValue(hd.cards);
+    const myTurn = this.phase === 'player_turns' && this.turn === p.id && index === p.activeHand && hd.status === 'playing';
+    return {
+      cards: hd.cards.map((c) => ({ ...c })),
+      bet: hd.bet,
+      total,
+      soft,
+      status: hd.status,
+      doubled: hd.doubled,
+      allIn: hd.allIn,
+      fromSplit: hd.fromSplit,
+      canDouble: myTurn && canDouble(hd.cards, this.settings.doubleRule, p.chips, hd.bet, hd.fromSplit),
+      outcome: hd.outcome,
+      delta: hd.delta,
+    };
+  }
+
   private playerView(p: Player): PlayerView {
-    const { total, soft } = handValue(p.cards);
+    const hand = p.hands[p.activeHand];
+    const myTurn = this.phase === 'player_turns' && this.turn === p.id && hand !== undefined && hand.status === 'playing';
     return {
       id: p.id,
       name: p.name,
@@ -834,19 +907,9 @@ export class Table {
       ready: p.ready,
       connected: p.conn !== null,
       seat: p.seat,
-      bet: p.bet,
-      cards: p.cards.map((c) => ({ ...c })),
-      total,
-      soft,
-      status: p.status,
-      doubled: p.doubled,
-      allIn: p.allIn,
-      canDouble:
-        this.phase === 'player_turns' &&
-        this.turn === p.id &&
-        canDouble(p.cards, this.settings.doubleRule, p.chips, p.bet),
-      outcome: p.outcome,
-      delta: p.delta,
+      hands: p.hands.map((hd, i) => this.handView(p, hd, i)),
+      activeHand: p.activeHand,
+      canSplit: myTurn && canSplit(hand.cards, this.settings.splitAllowed, p.chips, hand.bet, p.hands.length > 1),
     };
   }
 

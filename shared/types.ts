@@ -39,6 +39,8 @@ export interface Settings {
   dealerHitsSoft17: boolean;
   blackjackPayout: BlackjackPayout;
   doubleRule: DoubleRule;
+  /** Whether a pair may be split into two hands. */
+  splitAllowed: boolean;
 }
 
 /** Settings as sent to clients: the password itself is replaced by a flag. */
@@ -55,6 +57,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dealerHitsSoft17: false,
   blackjackPayout: '3:2',
   doubleRule: 'any',
+  splitAllowed: true,
 };
 
 export const SETTINGS_LIMITS = {
@@ -97,6 +100,7 @@ export function validateSettings(s: Settings): string | null {
   if (s.doubleRule !== 'any' && s.doubleRule !== '9-11' && s.doubleRule !== 'off') {
     return 'Double down must be any, 9-11 or off';
   }
+  if (typeof s.splitAllowed !== 'boolean') return 'Split must be on or off';
   return null;
 }
 
@@ -118,6 +122,26 @@ export type HandStatus =
   | 'bust'
   | 'blackjack';
 
+/** One hand of a player. A player has one hand, or two after a split. */
+export interface HandView {
+  cards: Card[];
+  bet: number;
+  total: number;
+  soft: boolean;
+  status: HandStatus;
+  doubled: boolean;
+  /** True when the bet was the player's whole stack. */
+  allIn: boolean;
+  /** True for the two hands made by a split. A 21 on such a hand is not a blackjack. */
+  fromSplit: boolean;
+  /** True only for the hand being played right now, when the double rule and the chips allow it. */
+  canDouble: boolean;
+  /** Set once the round is settled; cleared when the next round starts. */
+  outcome: Outcome | null;
+  /** Net chip change for this hand, set together with `outcome`. */
+  delta: number | null;
+}
+
 export interface PlayerView {
   id: string;
   name: string;
@@ -126,20 +150,12 @@ export interface PlayerView {
   connected: boolean;
   /** Seat index, or null when watching or waiting for a seat. */
   seat: number | null;
-  bet: number;
-  cards: Card[];
-  total: number;
-  soft: boolean;
-  status: HandStatus;
-  doubled: boolean;
-  /** True when the bet was the player's whole stack. */
-  allIn: boolean;
-  /** True only for the player whose turn it is and who may double right now. */
-  canDouble: boolean;
-  /** Set once the round is settled; cleared when the next round starts. */
-  outcome: Outcome | null;
-  /** Net chip change for the round, set together with `outcome`. */
-  delta: number | null;
+  /** Empty when the player has no hand (sitting out, watching, or between rounds). Two after a split. */
+  hands: HandView[];
+  /** Index into `hands` of the hand being played; 0 when it is nobody's turn. */
+  activeHand: number;
+  /** True only on this player's turn, when splitting is allowed right now. */
+  canSplit: boolean;
 }
 
 export interface DealerView {
@@ -179,7 +195,7 @@ export interface TableState {
 
 // ---------------------------------------------------------------- messages
 
-export type ActionName = 'hit' | 'stand' | 'double';
+export type ActionName = 'hit' | 'stand' | 'double' | 'split';
 
 export type ClientMsg =
   | { type: 'join'; username: string; password?: string; reconnectToken?: string; hostToken?: string }
@@ -217,6 +233,8 @@ export type ErrorCode =
 export interface RoundResultEntry {
   playerId: string;
   name: string;
+  /** Which of the player's hands this result is for (0 unless they split). */
+  hand: number;
   outcome: Outcome;
   delta: number;
 }

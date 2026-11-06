@@ -177,18 +177,18 @@ async function run(browser, label, vp) {
     alex.send({ type: 'place_bet', amount: 50 });
     sam.send({ type: 'place_bet', amount: 25 });
     riley.send({ type: 'place_bet', amount: 100 });
-    await alex.waitFor((s) => s.players.filter((p) => p.bet > 0).length === 3, 'bot bets');
+    await alex.waitFor((s) => s.players.filter((p) => (p.hands[0]?.bet ?? 0) > 0).length === 3, 'bot bets');
     await page.click('.chip-btn[data-value="100"]');
     await page.click('.chip-btn[data-value="25"]');
     await page.click('.chip-btn[data-value="25"]');
     await shot('3-betting');
 
-    await pressOrClick('Enter', '#confirm-bet', () => alex.state.players.find((p) => p.name === 'Maya').bet > 0);
+    await pressOrClick('Enter', '#confirm-bet', () => (alex.state.players.find((p) => p.name === 'Maya').hands[0]?.bet ?? 0) > 0);
     await alex.waitFor((s) => s.phase === 'player_turns', 'player turns');
     await shot('4-my-turn');
 
-    await pressOrClick('h', '#hit-btn', () => alex.state.players.find((p) => p.name === 'Maya').cards.length === 3);
-    await alex.waitFor((s) => s.players.find((p) => p.name === 'Maya').cards.length === 3, 'Maya hits');
+    await pressOrClick('h', '#hit-btn', () => alex.state.players.find((p) => p.name === 'Maya').hands[0]?.cards.length === 3);
+    await alex.waitFor((s) => s.players.find((p) => p.name === 'Maya').hands[0]?.cards.length === 3, 'Maya hits');
     await shot('4b-my-turn-after-hit');
     await pressOrClick('s', '#stand-btn', () => alex.state.turn !== alex.state.players.find((p) => p.name === 'Maya').id);
     await alex.waitFor((s) => s.turn === alex.id, "Alex's turn");

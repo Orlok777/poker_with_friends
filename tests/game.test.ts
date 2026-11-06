@@ -5,6 +5,7 @@ import { Shoe, mulberry32 } from '../server/deck.js';
 import {
   blackjackWinnings,
   canDouble,
+  canSplit,
   dealerShouldHit,
   describeHand,
   handValue,
@@ -197,6 +198,59 @@ describe('settleHand', () => {
   });
 });
 
+describe('canSplit', () => {
+  const can = (text: string, o: { allowed?: boolean; chips?: number; bet?: number; already?: boolean } = {}) =>
+    canSplit(hand(text), o.allowed ?? true, o.chips ?? 500, o.bet ?? 100, o.already ?? false);
+
+  it('allows two cards of the same rank', () => {
+    expect(can('8 8')).toBe(true);
+    expect(can('A A')).toBe(true);
+  });
+
+  it('allows any two 10-value cards, such as K and 10', () => {
+    expect(can('K 10')).toBe(true);
+    expect(can('J Q')).toBe(true);
+  });
+
+  it('refuses cards of different values', () => {
+    expect(can('9 10')).toBe(false);
+    expect(can('A K')).toBe(false);
+    expect(can('5 6')).toBe(false);
+  });
+
+  it('refuses a hand that is not exactly two cards', () => {
+    expect(can('8')).toBe(false);
+    expect(can('8 8 8')).toBe(false);
+  });
+
+  it('refuses when the setting is off, after a split, or when the chips do not cover a second bet', () => {
+    expect(can('8 8', { allowed: false })).toBe(false);
+    expect(can('8 8', { already: true })).toBe(false);
+    expect(can('8 8', { chips: 99, bet: 100 })).toBe(false);
+    expect(can('8 8', { chips: 100, bet: 100 })).toBe(true);
+  });
+});
+
+describe('split hands', () => {
+  it('can be doubled even with an ace and a ten, since that is not a blackjack there', () => {
+    expect(canDouble(hand('A K'), 'any', 500, 100)).toBe(false);
+    expect(canDouble(hand('A K'), 'any', 500, 100, true)).toBe(true);
+    expect(canDouble(hand('5 6'), 'off', 500, 100, true)).toBe(false);
+  });
+
+  it('pay a 21 as a normal win, 1:1, never as a blackjack', () => {
+    expect(settleHand(hand('A K'), hand('10 7'), 100, '3:2')).toEqual({ outcome: 'blackjack', delta: 150 });
+    expect(settleHand(hand('A K'), hand('10 7'), 100, '3:2', true)).toEqual({ outcome: 'win', delta: 100 });
+    expect(settleHand(hand('A K'), hand('10 7'), 100, '6:5', true)).toEqual({ outcome: 'win', delta: 100 });
+  });
+
+  it('push against a dealer 21 made of three cards, and lose against a dealer blackjack', () => {
+    expect(settleHand(hand('A K'), hand('5 6 K'), 100, '3:2', true)).toEqual({ outcome: 'push', delta: 0 });
+    expect(settleHand(hand('A K'), hand('A K'), 100, '3:2', true)).toEqual({ outcome: 'loss', delta: -100 });
+  });
+});
+
+
 describe('Shoe', () => {
   it('holds the right number of cards', () => {
     expect(new Shoe(5, mulberry32(1)).remaining).toBe(260);
@@ -273,6 +327,8 @@ describe('validateSettings', () => {
     expect(bad({ turnSeconds: 5 })).not.toBeNull();
     expect(bad({ turnSeconds: null })).toBeNull();
     expect(bad({ maxPlayers: 1.5 })).not.toBeNull();
+    expect(bad({ splitAllowed: 'yes' as unknown as boolean })).not.toBeNull();
+    expect(DEFAULT_SETTINGS.splitAllowed).toBe(true);
   });
 });
 

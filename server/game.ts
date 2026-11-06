@@ -54,16 +54,43 @@ export function describeHand(cards: readonly Card[]): string {
   return soft ? `soft ${total}` : `${total}`;
 }
 
-/** Whether a player may double: first two cards only, rule allows it, and the chips cover the extra bet. */
-export function canDouble(cards: readonly Card[], rule: DoubleRule, chips: number, bet: number): boolean {
+/**
+ * Whether a player may double: first two cards only, rule allows it, and the chips cover the extra bet.
+ * `fromSplit` hands can be doubled too (double after split); an ace and a ten there is a plain 21, not a blackjack.
+ */
+export function canDouble(
+  cards: readonly Card[],
+  rule: DoubleRule,
+  chips: number,
+  bet: number,
+  fromSplit = false,
+): boolean {
   if (rule === 'off') return false;
   if (cards.length !== 2) return false;
   if (chips < bet) return false;
-  if (isBlackjack(cards)) return false;
+  if (!fromSplit && isBlackjack(cards)) return false;
   if (rule === 'any') return true;
   // "9 to 11 only" means a hard total of 9, 10 or 11.
   const { total, soft } = handValue(cards);
   return !soft && total >= 9 && total <= 11;
+}
+
+/**
+ * Whether a player may split: the setting is on, they have exactly two cards of the same value
+ * (any two 10-value cards count), they have not split yet, and the chips cover a second bet.
+ */
+export function canSplit(
+  cards: readonly Card[],
+  allowed: boolean,
+  chips: number,
+  bet: number,
+  alreadySplit: boolean,
+): boolean {
+  if (!allowed || alreadySplit) return false;
+  if (cards.length !== 2) return false;
+  if (chips < bet) return false;
+  const [a, b] = cards as [Card, Card];
+  return rankValue(a.rank) === rankValue(b.rank);
 }
 
 /** Dealer draws on 16 or less, and on soft 17 only when the table rule says so. */
@@ -93,17 +120,19 @@ export interface Settlement {
 /**
  * Settles one finished player hand against the finished dealer hand.
  * `bet` is the total at risk, so it is already doubled for a doubled hand.
+ * A hand made by a split (`fromSplit`) can never be a blackjack: its 21 is a normal 21 and pays 1:1.
  */
 export function settleHand(
   player: readonly Card[],
   dealer: readonly Card[],
   bet: number,
   payout: BlackjackPayout,
+  fromSplit = false,
 ): Settlement {
   // A player who busts loses at once, even if the dealer busts later.
   if (isBust(player)) return { outcome: 'loss', delta: -bet };
 
-  const playerBj = isBlackjack(player);
+  const playerBj = !fromSplit && isBlackjack(player);
   const dealerBj = isBlackjack(dealer);
 
   if (playerBj && dealerBj) return { outcome: 'push', delta: 0 };

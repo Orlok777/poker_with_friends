@@ -5,7 +5,7 @@ import { app, me, resetChips, send } from './app.js';
 import { slideFrom, ringEl } from './cards.js';
 import { $, fmt, h } from './dom.js';
 import { playChip } from './sound.js';
-import { setBetSource, updatePendingBet } from './table.js';
+import { betOf, setBetSource, updatePendingBet } from './table.js';
 
 const CHIP_VALUES = [10, 25, 100, 500];
 
@@ -91,7 +91,12 @@ function onAllInClick(): void {
   renderControls();
 }
 
-const ACTION_BUTTONS: Record<ActionName, string> = { hit: 'hit-btn', stand: 'stand-btn', double: 'double-btn' };
+const ACTION_BUTTONS: Record<ActionName, string> = {
+  hit: 'hit-btn',
+  stand: 'stand-btn',
+  double: 'double-btn',
+  split: 'split-btn',
+};
 
 function act(action: ActionName): void {
   const btn = $<HTMLButtonElement>(ACTION_BUTTONS[action]);
@@ -128,7 +133,8 @@ function onKey(ev: KeyboardEvent): void {
     confirmBet();
     return;
   }
-  const action: ActionName | null = key === 'h' ? 'hit' : key === 's' ? 'stand' : key === 'd' ? 'double' : null;
+  const KEYS: Record<string, ActionName> = { h: 'hit', s: 'stand', d: 'double', p: 'split' };
+  const action: ActionName | null = KEYS[key] ?? null;
   if (!action || $('action-bar').hidden) return;
   const id = ACTION_BUTTONS[action];
   if ($<HTMLButtonElement>(id).disabled) return;
@@ -179,8 +185,9 @@ export function renderControls(): void {
   if (!s || !self || s.phase === 'waiting') return;
 
   const seated = self.seat !== null;
-  const outOfChips = self.chips < s.settings.minBet && self.bet === 0;
-  const canBet = s.phase === 'betting' && seated && self.bet === 0 && !outOfChips && s.deadline !== null;
+  const myBet = betOf(self);
+  const outOfChips = self.chips < s.settings.minBet && myBet === 0;
+  const canBet = s.phase === 'betting' && seated && myBet === 0 && !outOfChips && s.deadline !== null;
   if (!canBet) pendingBet = 0;
   const cap = betCap();
   const busy = actionBusy;
@@ -200,7 +207,7 @@ export function renderControls(): void {
 
   // ---- betting
   const betBar = $('bet-bar');
-  betBar.hidden = !(s.phase === 'betting' && seated && self.bet === 0 && s.deadline !== null);
+  betBar.hidden = !(s.phase === 'betting' && seated && myBet === 0 && s.deadline !== null);
   betBar.classList.toggle('out-of-chips', outOfChips);
   $('pending-bet').textContent = fmt(pendingBet);
   $('bet-limits').textContent = `Min ${fmt(s.settings.minBet)}`;
@@ -219,20 +226,22 @@ export function renderControls(): void {
   reset.disabled = busy;
 
   // ---- actions: shown for the whole round so the layout does not jump between phases
-  const inRound = seated && self.status !== 'none' && self.cards.length > 0;
+  const inRound = seated && (self.hands[0]?.cards.length ?? 0) > 0;
   $('action-bar').hidden = !(inRound && s.phase !== 'betting');
   const myTurn = s.phase === 'player_turns' && s.turn === self.id && !busy;
   $<HTMLButtonElement>('hit-btn').disabled = !myTurn;
   $<HTMLButtonElement>('stand-btn').disabled = !myTurn;
-  $<HTMLButtonElement>('double-btn').disabled = !(myTurn && self.canDouble);
+  $<HTMLButtonElement>('double-btn').disabled = !(myTurn && self.hands[self.activeHand]?.canDouble);
+  // Split is always shown; it is only enabled when splitting is allowed right now.
+  $<HTMLButtonElement>('split-btn').disabled = !(myTurn && self.canSplit);
   $('action-bar').classList.toggle('my-turn', s.phase === 'player_turns' && s.turn === self.id);
 
   // ---- note
   const note = $('watch-note');
   let text = '';
   if (seated && s.phase === 'betting' && outOfChips) text = "You're out of chips. Reset them to keep playing.";
-  else if (seated && s.phase === 'betting' && self.bet > 0) text = 'Bet placed. Waiting for the others.';
-  else if (seated && self.status === 'none' && s.phase !== 'betting') text = "You're sitting out this round.";
+  else if (seated && s.phase === 'betting' && myBet > 0) text = 'Bet placed. Waiting for the others.';
+  else if (seated && self.hands.length === 0 && s.phase !== 'betting') text = "You're sitting out this round.";
   note.textContent = text;
   note.hidden = text === '';
 }

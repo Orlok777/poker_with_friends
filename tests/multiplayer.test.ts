@@ -1,10 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ActionName, PlayerView, ServerMsg, TableState } from '../shared/types.js';
+import type { ActionName, HandView, PlayerView, ServerMsg, TableState } from '../shared/types.js';
 import { isHiddenCard } from '../shared/types.js';
 import type { ServerOptions } from '../server/index.js';
-import { cards, createHarness, sleep, waitUntil, type TestClient } from './helpers.js';
+import type { Timing } from '../server/table.js';
+import { betOf, cards, createHarness, sleep, waitUntil, type TestClient } from './helpers.js';
 
 const h = createHarness();
 let expectedLogs = 0;
@@ -39,7 +40,7 @@ function allMessages(...clients: TestClient[]): ServerMsg[] {
 describe('playing rounds', () => {
   it('2 clients join, bet and play 3 rounds without errors', async () => {
     const { alex, bob } = await twoPlayers();
-    const hitBelow17 = (p: PlayerView): ActionName => (p.total < 17 ? 'hit' : 'stand');
+    const hitBelow17 = (p: HandView): ActionName => (p.total < 17 ? 'hit' : 'stand');
     alex.autoPlay(10, hitBelow17);
     bob.autoPlay(10, hitBelow17);
     const settles = alex.collectSettles();
@@ -95,8 +96,8 @@ describe('playing rounds', () => {
       expect(bob.me(s).chips, `Bob after round ${round}`).toBe(b);
     }
     const last = settles.get(5)!;
-    expect(alex.me(last).outcome).toBe('loss');
-    expect(bob.me(last).outcome).toBe('push');
+    expect(alex.me(last).hands[0]!.outcome).toBe('loss');
+    expect(bob.me(last).hands[0]!.outcome).toBe('push');
     expect(alex.errors).toEqual([]);
     expect(bob.errors).toEqual([]);
   });
@@ -315,10 +316,10 @@ describe('rejected messages', () => {
     expect((await bob.expectError({ type: 'place_bet', amount: '50' as unknown as number })).code).toBe('bet_invalid');
     expect((await bob.expectError({ type: 'place_bet', amount: -50 })).code).toBe('bet_invalid');
     expect(bob.me().chips).toBe(1000);
-    expect(bob.me().bet).toBe(0);
+    expect(betOf(bob.me())).toBe(0);
 
     alex.send({ type: 'place_bet', amount: 100 });
-    await alex.waitForState((s) => alex.me(s).bet === 100);
+    await alex.waitForState((s) => betOf(alex.me(s)) === 100);
     expect((await alex.expectError({ type: 'place_bet', amount: 100 })).code).toBe('already_bet');
     expect(alex.me().chips).toBe(900);
     expect((await bob.expectError({ type: 'set_ready', ready: true })).code).toBe('wrong_phase');
@@ -327,14 +328,14 @@ describe('rejected messages', () => {
     const turn = await alex.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
 
     // Player turns: Bob acts out of turn.
-    const before = JSON.stringify(turn.players.map((p) => [p.id, p.cards, p.chips, p.bet]));
+    const before = JSON.stringify(turn.players.map((p) => [p.id, p.hands, p.chips]));
     expect((await bob.expectError({ type: 'action', action: 'hit' })).code).toBe('not_your_turn');
     expect((await bob.expectError({ type: 'action', action: 'stand' })).code).toBe('not_your_turn');
     expect((await alex.expectError({ type: 'action', action: 'fly' as never })).code).toBe('bad_message');
     expect((await alex.expectError({ type: 'place_bet', amount: 10 })).code).toBe('wrong_phase');
     expect((await alex.expectError({ type: 'reset_chips' })).code).toBe('cannot_reset');
     expect((await bob.expectError({ type: 'update_settings', settings: { minBet: 1 } })).code).toBe('not_host');
-    const after = JSON.stringify(bob.state!.players.map((p) => [p.id, p.cards, p.chips, p.bet]));
+    const after = JSON.stringify(bob.state!.players.map((p) => [p.id, p.hands, p.chips]));
     expect(after).toBe(before);
     expect(bob.state!.turn).toBe(alex.id);
 
@@ -359,7 +360,7 @@ describe('rejected messages', () => {
     await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
     alex.send({ type: 'place_bet', amount: 100 });
     await alex.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
-    expect(alex.me().canDouble).toBe(false);
+    expect(alex.me().hands[0]!.canDouble).toBe(false);
     expect((await alex.expectError({ type: 'action', action: 'double' })).code).toBe('action_not_allowed');
     alex.send({ type: 'action', action: 'stand' });
     await alex.waitForState((s) => s.phase === 'settle');
@@ -375,15 +376,14 @@ describe('timers and disconnects', () => {
     alex.send({ type: 'place_bet', amount: 100 }); // Bob never bets
 
     const dealt = await alex.waitForState((s) => s.phase === 'player_turns');
-    expect(bob.me(dealt).bet).toBe(0);
-    expect(bob.me(dealt).status).toBe('none');
-    expect(bob.me(dealt).cards).toEqual([]);
+    expect(betOf(bob.me(dealt))).toBe(0);
+    expect(bob.me(dealt).hands).toEqual([]); // no bet, no hand
     expect(bob.me(dealt).chips).toBe(1000);
     expect(dealt.turn).toBe(alex.id);
 
     // Alex does nothing, so the timer stands for him.
     const settled = await alex.waitForState((s) => s.phase === 'settle', 4000);
-    expect(alex.me(settled).status).toBe('stood');
+    expect(alex.me(settled).hands[0]!.status).toBe('stood');
     expect(settled.log.some((l) => l.text.includes('Alex ran out of time'))).toBe(true);
     expect(alex.me(settled).chips).toBe(1100); // 19 against 17
     expect(bob.me(settled).chips).toBe(1000);
@@ -405,7 +405,7 @@ describe('timers and disconnects', () => {
     });
     const settled = await bob.waitForState((s) => s.phase === 'settle', 5000);
     expect(closed).toBe(true);
-    expect(settled.players.find((p) => p.name === 'Alex')!.status).toBe('stood');
+    expect(settled.players.find((p) => p.name === 'Alex')!.hands[0]!.status).toBe('stood');
     // The seat is held, not given away.
     expect(settled.players.find((p) => p.name === 'Alex')!.seat).toBe(0);
   });
@@ -426,7 +426,7 @@ describe('timers and disconnects', () => {
       }
     });
     const settled = await bob.waitForState((s) => s.phase === 'settle', 5000);
-    expect(settled.players.find((p) => p.name === 'Alex')!.status).toBe('stood');
+    expect(settled.players.find((p) => p.name === 'Alex')!.hands[0]!.status).toBe('stood');
   });
 
   it('returns a refreshed player to the same seat mid-round', async () => {
@@ -449,8 +449,8 @@ describe('timers and disconnects', () => {
     const after = await fresh.waitForState((s) => s.players.find((p) => p.id === id)?.connected === true);
     const bobAfter = after.players.find((p) => p.id === id)!;
     expect(bobAfter.seat).toBe(before.seat);
-    expect(bobAfter.cards).toEqual(before.cards);
-    expect(bobAfter.bet).toBe(50);
+    expect(bobAfter.hands[0]!.cards).toEqual(before.hands[0]!.cards);
+    expect(betOf(bobAfter)).toBe(50);
 
     // The refreshed client can carry on: Alex stands, then Bob stands.
     alex.send({ type: 'action', action: 'stand' });
@@ -516,7 +516,7 @@ describe('chips and usernames', () => {
     await sleep(50);
     expect(bob.errors).toEqual([]);
     bob.send({ type: 'place_bet', amount: 100 });
-    await bob.waitForState((s) => bob.me(s).bet === 100);
+    await bob.waitForState((s) => betOf(bob.me(s)) === 100);
     expect((await bob.expectError({ type: 'reset_chips' })).code).toBe('cannot_reset');
     expect(bob.me().chips).toBe(900);
   });
@@ -530,10 +530,10 @@ describe('bet limits', () => {
     await bob.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
     expect((await bob.expectError({ type: 'place_bet', amount: 9 })).code).toBe('bet_invalid');
     alex.send({ type: 'place_bet', amount: 750 }); // above the old 500 cap
-    await alex.waitForState((s) => alex.me(s).bet === 750);
+    await alex.waitForState((s) => betOf(alex.me(s)) === 750);
     expect(alex.me().chips).toBe(250);
     bob.send({ type: 'place_bet', amount: 10 }); // the minimum itself
-    await bob.waitForState((s) => bob.me(s).bet === 10);
+    await bob.waitForState((s) => betOf(bob.me(s)) === 10);
     expect(bob.me().chips).toBe(990);
   });
 });
@@ -546,10 +546,10 @@ describe('all in', () => {
     await bob.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
     alex.send({ type: 'place_bet', amount: 1000 }); // the whole stack
     bob.send({ type: 'place_bet', amount: 999 });
-    const st = await alex.waitForState((s) => alex.me(s).bet === 1000 && bob.me(s).bet === 999);
-    expect(alex.me(st).allIn).toBe(true);
+    const st = await alex.waitForState((s) => betOf(alex.me(s)) === 1000 && betOf(bob.me(s)) === 999);
+    expect(alex.me(st).hands[0]!.allIn).toBe(true);
     expect(alex.me(st).chips).toBe(0);
-    expect(bob.me(st).allIn).toBe(false);
+    expect(bob.me(st).hands[0]!.allIn).toBe(false);
     expect(st.log.some((e) => e.text === 'Alex goes all in (1,000)')).toBe(true);
     expect(st.log.some((e) => e.text === 'Bob bets 999')).toBe(true);
   });
@@ -563,5 +563,210 @@ describe('all in', () => {
     expect((await bob.expectError({ type: 'place_bet', amount: 1001 })).code).toBe('insufficient_chips');
     expect((await bob.expectError({ type: 'place_bet', amount: 99 })).code).toBe('bet_invalid');
     expect(bob.me().chips).toBe(1000);
+  });
+});
+
+// ------------------------------------------------------------------- split
+
+/**
+ * One player (Alex, the host) with 1000 chips who bets 100 and gets to act.
+ * Deal order is: Alex, dealer up, Alex, dealer hole, then draws in the order they are used.
+ */
+async function soloTurn(
+  riggedText: string,
+  settings: Partial<TableState['settings']> = {},
+  opts: { bet?: number; timing?: Partial<Timing> } = {},
+) {
+  const { srv } = await h.boot({ rigged: cards(riggedText), timing: opts.timing });
+  const alex = await h.client(srv);
+  await alex.join('Alex', { hostToken: srv.hostToken });
+  if (Object.keys(settings).length > 0) {
+    alex.send({ type: 'update_settings', settings });
+    await alex.waitForState((s) =>
+      Object.entries(settings).every(([k, v]) => (s.settings as unknown as Record<string, unknown>)[k] === v),
+    );
+    // Changed starting chips only apply to a fresh balance, so reset to pick them up.
+    alex.send({ type: 'reset_chips' });
+    await alex.waitForState((s) => alex.me(s).chips === s.settings.startingChips);
+  }
+  alex.send({ type: 'set_ready', ready: true });
+  alex.send({ type: 'start_game' });
+  await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
+  alex.send({ type: 'place_bet', amount: opts.bet ?? 100 });
+  await alex.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
+  return alex;
+}
+
+describe('split', () => {
+  it('splits a pair into two hands, plays the left hand first and settles each hand separately', async () => {
+    // Alex 8 8, dealer 10 7 (17). Split: left 8+3, right 8+7. Left doubles with a 10, right stands on 15.
+    const alex = await soloTurn('8 10 8 7 3 7 10');
+    expect(alex.me().canSplit).toBe(true);
+
+    alex.send({ type: 'action', action: 'split' });
+    const split = await alex.waitForState((s) => alex.me(s).hands.length === 2);
+    const me = alex.me(split);
+    expect(me.chips).toBe(800); // second bet of 100 taken
+    expect(me.hands.map((x) => x.cards.map((c) => c.rank))).toEqual([['8', '3'], ['8', '7']]);
+    expect(me.hands.map((x) => x.bet)).toEqual([100, 100]);
+    expect(me.activeHand).toBe(0);
+    expect(me.canSplit).toBe(false); // no re-splitting
+    expect(me.hands[0]!.canDouble).toBe(true); // 11, double after split
+    expect(me.hands[1]!.canDouble).toBe(false); // not the hand being played
+    expect(split.turn).toBe(alex.id);
+
+    alex.send({ type: 'action', action: 'double' });
+    const second = await alex.waitForState((s) => alex.me(s).activeHand === 1);
+    expect(alex.me(second).hands[0]).toMatchObject({ bet: 200, doubled: true, status: 'stood', total: 21 });
+    expect(alex.me(second).chips).toBe(700);
+
+    alex.send({ type: 'action', action: 'stand' });
+    const settled = await alex.waitForState((s) => s.phase === 'settle');
+    const [left, right] = alex.me(settled).hands;
+    expect(left).toMatchObject({ outcome: 'win', delta: 200 }); // 21 beats 17, doubled bet
+    expect(right).toMatchObject({ outcome: 'loss', delta: -100 }); // 15 loses to 17
+    expect(alex.me(settled).chips).toBe(1100); // 1000 + 200 - 100
+
+    const result = alex.all.find((m) => m.type === 'round_result');
+    expect(result && result.type === 'round_result' ? result.results.map((r) => [r.hand, r.outcome, r.delta]) : []).toEqual([
+      [0, 'win', 200],
+      [1, 'loss', -100],
+    ]);
+  });
+
+  it('pays a 21 on a split hand 1:1, not as a blackjack (K and 10 count as a pair)', async () => {
+    // Alex K 10, dealer 9 8 (17). Split: left K+A = 21, right 10+9 = 19.
+    const alex = await soloTurn('K 9 10 8 A 9');
+    expect(alex.me().canSplit).toBe(true);
+    alex.send({ type: 'action', action: 'split' });
+    // The 21 stands by itself, so the right hand is up next.
+    const split = await alex.waitForState((s) => alex.me(s).hands.length === 2 && alex.me(s).activeHand === 1);
+    expect(alex.me(split).hands[0]).toMatchObject({ status: 'stood', total: 21 });
+
+    alex.send({ type: 'action', action: 'stand' });
+    const settled = await alex.waitForState((s) => s.phase === 'settle');
+    const [left, right] = alex.me(settled).hands;
+    expect(left).toMatchObject({ outcome: 'win', delta: 100 }); // not 150
+    expect(right).toMatchObject({ outcome: 'win', delta: 100 });
+    expect(alex.me(settled).chips).toBe(1200);
+  });
+
+  it('gives split aces one card each and stands them automatically', async () => {
+    // Alex A A, dealer 9 8 (17). Split: left A+10 = 21, right A+5 = 16.
+    const alex = await soloTurn('A 9 A 8 10 5');
+    alex.send({ type: 'action', action: 'split' });
+    const settled = await alex.waitForState((s) => s.phase === 'settle');
+    const me = alex.me(settled);
+    expect(me.hands.map((x) => x.cards.length)).toEqual([2, 2]);
+    expect(me.hands.every((x) => x.status === 'stood')).toBe(true);
+    expect(me.hands[0]).toMatchObject({ outcome: 'win', delta: 100 }); // 21 pays 1:1
+    expect(me.hands[1]).toMatchObject({ outcome: 'loss', delta: -100 });
+    expect(me.chips).toBe(1000);
+    // Neither ace ever got a turn: no state has two hands while it is still the player's turn.
+    const gaveTurn = alex.all.some(
+      (m) => m.type === 'table_state' && m.phase === 'player_turns' && m.players.some((p) => p.hands.length === 2),
+    );
+    expect(gaveTurn).toBe(false);
+  });
+
+  it('does not re-split split aces that draw another ace', async () => {
+    const alex = await soloTurn('A 9 A 8 A 5');
+    alex.send({ type: 'action', action: 'split' });
+    const settled = await alex.waitForState((s) => s.phase === 'settle');
+    expect(alex.me(settled).hands.map((x) => x.total)).toEqual([12, 16]);
+    expect(alex.me(settled).hands.every((x) => x.status === 'stood')).toBe(true);
+  });
+
+  it('refuses a split of different values', async () => {
+    const alex = await soloTurn('10 9 5 8');
+    expect(alex.me().canSplit).toBe(false);
+    expect((await alex.expectError({ type: 'action', action: 'split' })).code).toBe('action_not_allowed');
+    expect(alex.me().hands).toHaveLength(1);
+    expect(alex.me().chips).toBe(900);
+  });
+
+  it('refuses a split when the setting is off', async () => {
+    const alex = await soloTurn('8 10 8 7', { splitAllowed: false });
+    expect(alex.me().canSplit).toBe(false);
+    expect((await alex.expectError({ type: 'action', action: 'split' })).code).toBe('action_not_allowed');
+  });
+
+  it('refuses a split without chips for the second bet', async () => {
+    const alex = await soloTurn('8 10 8 7', { startingChips: 100 }, { bet: 100 });
+    expect(alex.me().chips).toBe(0);
+    expect(alex.me().canSplit).toBe(false);
+    expect((await alex.expectError({ type: 'action', action: 'split' })).code).toBe('action_not_allowed');
+  });
+
+  it('refuses a split after a hit', async () => {
+    const alex = await soloTurn('2 10 2 7 2');
+    alex.send({ type: 'action', action: 'hit' });
+    await alex.waitForState((s) => alex.me(s).hands[0]!.cards.length === 3);
+    expect(alex.me().canSplit).toBe(false);
+    expect((await alex.expectError({ type: 'action', action: 'split' })).code).toBe('action_not_allowed');
+  });
+
+  it('refuses a second split even when both new hands are pairs', async () => {
+    const alex = await soloTurn('8 10 8 7 8 8');
+    alex.send({ type: 'action', action: 'split' });
+    await alex.waitForState((s) => alex.me(s).hands.length === 2);
+    expect(alex.me().hands.map((x) => x.cards.map((c) => c.rank))).toEqual([['8', '8'], ['8', '8']]);
+    expect(alex.me().canSplit).toBe(false);
+    expect((await alex.expectError({ type: 'action', action: 'split' })).code).toBe('action_not_allowed');
+    expect(alex.me().hands).toHaveLength(2);
+    expect(alex.me().chips).toBe(800);
+  });
+
+  it('rejects a split out of turn and in the wrong phase', async () => {
+    const rigged = cards('8 8 10 8 8 7');
+    const { alex, bob } = await twoPlayers({ rigged, timing: { bettingMs: 5000, turnMs: 5000 } });
+    alex.send({ type: 'start_game' });
+    await bob.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
+    expect((await alex.expectError({ type: 'action', action: 'split' })).code).toBe('wrong_phase');
+    alex.send({ type: 'place_bet', amount: 100 });
+    bob.send({ type: 'place_bet', amount: 100 });
+    await bob.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
+    expect((await bob.expectError({ type: 'action', action: 'split' })).code).toBe('not_your_turn');
+    expect(bob.me().canSplit).toBe(false); // only on that player's own turn
+    expect(bob.me().chips).toBe(900);
+  });
+
+  it('follows the 9-11 double-down setting for each hand after a split', async () => {
+    // Left 8+3 = 11 (can double), right 8+7 = 15 (cannot).
+    const alex = await soloTurn('8 10 8 7 3 7', { doubleRule: '9-11' });
+    alex.send({ type: 'action', action: 'split' });
+    await alex.waitForState((s) => alex.me(s).hands.length === 2);
+    expect(alex.me().hands[0]!.canDouble).toBe(true);
+    alex.send({ type: 'action', action: 'stand' });
+    await alex.waitForState((s) => alex.me(s).activeHand === 1);
+    expect(alex.me().hands[1]!.canDouble).toBe(false);
+    expect((await alex.expectError({ type: 'action', action: 'double' })).code).toBe('action_not_allowed');
+  });
+
+  it('does not allow a double after split when doubling is off', async () => {
+    const alex = await soloTurn('8 10 8 7 3 7', { doubleRule: 'off' });
+    alex.send({ type: 'action', action: 'split' });
+    await alex.waitForState((s) => alex.me(s).hands.length === 2);
+    expect(alex.me().hands[0]!.canDouble).toBe(false);
+    expect((await alex.expectError({ type: 'action', action: 'double' })).code).toBe('action_not_allowed');
+  });
+
+  it('restarts the turn timer for each hand', async () => {
+    const alex = await soloTurn('8 10 8 7 3 7', {}, { timing: { turnMs: 5000, bettingMs: 5000 } });
+    alex.send({ type: 'action', action: 'split' });
+    const first = await alex.waitForState((s) => alex.me(s).hands.length === 2);
+    await sleep(60);
+    alex.send({ type: 'action', action: 'stand' });
+    const second = await alex.waitForState((s) => alex.me(s).activeHand === 1);
+    expect(second.deadline!).toBeGreaterThan(first.deadline! + 30);
+  });
+
+  it('stands both hands of an idle player when the turn timer runs out', async () => {
+    const alex = await soloTurn('8 10 8 7 3 7', {}, { timing: { turnMs: 150, bettingMs: 5000 } });
+    alex.send({ type: 'action', action: 'split' });
+    const settled = await alex.waitForState((s) => s.phase === 'settle', 4000);
+    expect(alex.me(settled).hands.map((x) => x.status)).toEqual(['stood', 'stood']);
+    expect(settled.log.filter((l) => l.text.includes('ran out of time')).length).toBe(2);
+    expect(alex.me(settled).chips).toBe(800); // 11 and 15 both lose to 17: 1000 - 200
   });
 });

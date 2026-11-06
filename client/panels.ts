@@ -67,6 +67,7 @@ export function renderRules(s: TableState): void {
     ['Blackjack pays', st.blackjackPayout === '3:2' ? '3 to 2' : '6 to 5'],
     ['Dealer on soft 17', st.dealerHitsSoft17 ? 'Hits' : 'Stands'],
     ['Double down', st.doubleRule === 'any' ? 'Any two cards' : st.doubleRule === '9-11' ? 'On 9, 10 or 11' : 'Not allowed'],
+    ['Split', st.splitAllowed ? 'Allowed, one split' : 'Not allowed'],
     ['Minimum bet', fmt(st.minBet)],
     ['Decks in the shoe', String(st.decks)],
     ['Betting time', `${st.bettingSeconds} s`],
