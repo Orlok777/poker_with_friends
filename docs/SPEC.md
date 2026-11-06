@@ -21,7 +21,7 @@ The stack is Node.js with TypeScript on both ends. One process serves the web pa
 - **Server:** Express for static files plus `ws` or Socket.IO for real-time messages. Pick one and say why in the plan.
 - **Client:** plain HTML, CSS and TypeScript, built with Vite or no bundler. Pick one in the plan. No frontend framework.
 - **Cards:** drawn in CSS or SVG in code, with no image files.
-- **Sounds:** generated in code with the Web Audio API, with no sound files.
+- **Sounds:** short `.mp3` effects from the CC0 Kenney Casino Audio pack, played with the Web Audio API (see `CREDITS.md`). Only the win and lose jingles are generated in code.
 - **Tests:** Vitest.
 - **Start:** `npm install && npm start` builds the client and starts the server on port 3000.
 
@@ -32,7 +32,7 @@ The stack is Node.js with TypeScript on both ends. One process serves the web pa
           game.ts       pure rules engine, no networking
           deck.ts       shoe, shuffle, seedable random generator
           store.ts      chips saved per username in data/players.json
-/client   index.html, main.ts, styles.css, sound.ts
+/client   index.html, main.ts, styles.css, sound.ts, public/sounds/*.mp3
 /tests    game.test.ts, multiplayer.test.ts
 /data     players.json  created on first run, ignored by git
 ```
@@ -42,7 +42,7 @@ The stack is Node.js with TypeScript on both ends. One process serves the web pa
 
 ## Game rules
 
-V1 uses standard casino rules with no split, insurance, surrender or side bets. The host can change some rules before the first round.
+V1 uses standard casino rules with one split, and no insurance, surrender or side bets. The host can change some rules before the first round.
 
 | Rule | Value | Host can change |
 | --- | --- | --- |
@@ -52,7 +52,8 @@ V1 uses standard casino rules with no split, insurance, surrender or side bets. 
 | Blackjack payout | 3:2 | Yes: 3:2 or 6:5 |
 | Dealer hole card | Dealer peeks for blackjack when showing an ace or a 10-value card | No |
 | Double down | On any first two cards: the bet doubles and the player gets exactly one more card | Yes: any two cards, 9 to 11 only, or off |
-| Split, insurance, surrender, side bets | Not in v1 | No |
+| Split | A pair can be split once for a second bet equal to the first; see below | Yes: on or off, default on |
+| Insurance, surrender, side bets | Not in v1 | No |
 
 Hand values:
 
@@ -62,6 +63,17 @@ Hand values:
 - Player blackjack against dealer blackjack is a push, and the bet is returned.
 - A player who busts loses at once, even if the dealer busts later.
 - Doubling needs enough chips to match the original bet.
+
+Split:
+
+- Allowed on the first two cards when both have the same value. Any two 10-value cards count, so K and 10 can be split.
+- It costs a second bet equal to the original, and is not allowed if the player doesn't have enough chips.
+- One split only: the new hands can't be split again.
+- Each new hand gets a second card straight away (left hand first, then right hand), and the hands are played in turn, left hand first. The turn timer restarts for each hand.
+- Double after split is allowed and follows the double-down setting, per hand.
+- Split aces get exactly one card each and stand automatically.
+- A 21 on a split hand is a normal 21, not a blackjack, so it pays 1:1.
+- Each hand is settled separately against the dealer.
 
 ## Host, joining and settings
 
@@ -82,10 +94,10 @@ Use a token rather than "connections from localhost". Tunnel traffic also arrive
 | Max players | 6 | 1 to 7 |
 | Table password | None | Optional, any text |
 | Starting chips | 1,000 | 100 to 100,000 |
-| Minimum bet | 10 | 1 up to the starting chips |
+| Minimum bet | 10 | 1 up to the starting chips. There is no maximum bet: a player may bet any amount from the minimum up to their own chips |
 | Betting timer | 20 s; a player with no bet sits out the round | 10 to 60 s |
 | Turn timer | 30 s; the player stands automatically when it runs out | 10 to 120 s, or off |
-| Decks, dealer on soft 17, blackjack payout, double down | As in Game rules | As in Game rules |
+| Decks, dealer on soft 17, blackjack payout, double down, split allowed | As in Game rules | As in Game rules |
 
 ## Chips and usernames
 
@@ -106,9 +118,9 @@ Each round runs through seven phases in order and then starts again from betting
 1. **Betting:** each seated player bets anything from the minimum bet up to their own chips before the betting timer ends. Anyone who doesn't bet sits out the round.
 2. **Deal:** one card face up to each player in seat order, then the dealer's up card, then a second card to each player, then the dealer's hole card face down. Cards are dealt about 300 ms apart.
 3. **Dealer peek:** if the up card is an ace or a 10-value card, the server checks for dealer blackjack. If the dealer has it, the hole card is revealed and the round skips to settle.
-4. **Player turns:** in seat order, left to right. Each player chooses Hit, Stand or Double until they stand, bust or reach 21. Blackjack and 21 stand automatically.
+4. **Player turns:** in seat order, left to right. Each player chooses Hit, Stand, Double or Split until they stand, bust or reach 21. Blackjack and 21 stand automatically. After a split, the player plays the left hand to the end and then the right hand.
 5. **Dealer turn:** reveal the hole card, then draw until 17 or more, following the soft-17 rule. If every player has busted, the dealer draws no cards.
-6. **Settle:** a win pays 1:1, blackjack pays the set payout, a push returns the bet, and a loss takes it. Chips are saved, and results stay on screen for 2 s.
+6. **Settle:** each hand is settled on its own: a win pays 1:1, blackjack pays the set payout, a push returns the bet, and a loss takes it. Chips are saved, and results stay on screen for 2 s (one named constant, `ROUND_PAUSE_MS`, in `server/table.ts`).
 7. **Next round:** reshuffle if 75% of the shoe has been dealt, seat any waiting players, then go back to step 1.
 
 ## Client/server message protocol
@@ -127,7 +139,7 @@ Every message is JSON with a `type` field, and the types are defined once in `/s
 | `update_settings` | settings | Host only, waiting room |
 | `start_game` | none | Host only, at least one player ready |
 | `place_bet` | amount | Betting phase |
-| `action` | hit, stand or double | That player's turn |
+| `action` | hit, stand, double or split | That player's turn |
 | `reset_chips` | none | Waiting room, or betting phase before that player bets |
 | `kick_player` | playerId | Host only |
 
@@ -137,14 +149,14 @@ Every message is JSON with a `type` field, and the types are defined once in `/s
 | --- | --- | --- |
 | `server_info` | whether a password is set, whether seats are free, current phase | As soon as a client connects |
 | `joined` | playerId, reconnect token, isHost | After a join or reconnect |
-| `table_state` | phase, settings, hostId, players (name, chips, ready, connected), seats, hands, totals, bets, dealer cards, whose turn, timer deadline | After every change |
-| `round_result` | per player: win, loss, push or blackjack, plus chip change | End of each round |
+| `table_state` | phase, settings, hostId, players (name, chips, ready, connected, and one hand, or two after a split, each with cards, total, bet, status, doubled, all-in flag and result; plus which hand is active and whether split is allowed now), seats, dealer cards, whose turn, timer deadline, a counter of shoe reshuffles | After every change |
+| `round_result` | per hand (two entries for a player who split): win, loss, push or blackjack, plus chip change | End of each round |
 | `kicked` | reason | The player was kicked |
 | `error` | code, message | A rejected message |
 
 Server rules:
 
-- Check every message for the right phase, the right player's turn, host rights, a bet within the limits, and enough chips. A rejected message gets an `error` reply and changes nothing.
+- Check every message for the right phase, the right player's turn, host rights, a bet of at least the minimum and no more than the player's chips, whether the action (including split) is allowed right now, and enough chips. A rejected message gets an `error` reply and changes nothing.
 - Never send the dealer's hole card to clients before it is revealed. Send it as a hidden card.
 - Never send the host token to anyone. Clients only learn `isHost`.
 - Send the full `table_state` after every change rather than partial updates, because it is simpler and harder to get wrong.
@@ -160,8 +172,10 @@ The game has three screens: join, waiting room and table. All of them are served
    - An oval green felt table, with the dealer at the top showing cards and hand total.
    - Player seats in an arc along the bottom, with your own seat at the center. Each seat shows name, chips, bet, cards, total and a status such as BUST, BLACKJACK or WIN +100.
    - The current player's seat is highlighted, with a countdown bar for the turn timer.
-   - Action bar with Hit, Stand and Double, greyed out when not allowed.
-   - Betting bar with chip buttons for 10, 25, 100 and 500, plus Clear and Confirm, and Reset chips.
+   - Action bar with Hit, Stand, Double and Split (shortcuts H, S, D and P), greyed out when not allowed. Split is always shown.
+   - After a split, both hands sit side by side in the player's spot, each with its own total badge, bet chip and result. The hand being played is highlighted.
+   - Betting bar with the label "Min 10" (the minimum bet), chip buttons for 10, 25, 100 and 500, plus Clear, Repeat, ×2, All in and Confirm, and Reset chips.
+   - **All in:** the first click turns the button into a highlighted "Confirm all in (1,050)?" showing the player's full chips; a second click bets the whole stack and confirms it. It goes back to normal after 3 s without a second click, or when the player clicks anything else. It is enabled only when the player has at least the minimum bet. An all-in bet shows an "ALL IN" tag on its chip, and the log says "<name> goes all in (1,050)".
    - A banner with the round results.
    - An event log of recent actions, such as "Alex hits: 7, total 15".
    - For the host only, a kick button on each other player's seat.
@@ -169,7 +183,7 @@ The game has three screens: join, waiting room and table. All of them are served
 Cards are white rounded rectangles with the rank and suit in the corners, red for hearts and diamonds. Face-down cards show a patterned back, and cards slide in from a shoe on the table.
 
 - **Theme:** classic casino green.
-- **Sounds:** card deal, chip bet, win and lose, all generated with the Web Audio API. Add a mute button and remember the choice in localStorage.
+- **Sounds:** recorded effects from the Kenney Casino Audio pack (CC0, `.mp3` so they play on iPhone Safari) for a card dealt (3 or 4 variants at random), the hole card flip, a reshuffle, a chip or bet placed, chips paid out on a win, and an all-in. The win and lose jingles are generated with the Web Audio API. Playback speed varies randomly between 0.95 and 1.05. A mute button remembers the choice in localStorage.
 - **Phones:** the table must still work on a 390 px-wide phone held upright. Seats can shrink or stack.
 
 ## Hosting and connecting
@@ -224,7 +238,7 @@ Don't build this in Phase 1. Once Phase 1 works, a second prompt wraps it in an 
 
 Don't build any of these.
 
-- Split, insurance, surrender and side bets, which are planned for a later version
+- Insurance, surrender and side bets, which are planned for a later version
 - More than one table, or lobbies with codes
 - A separately deployed website
 - Chat
@@ -239,7 +253,7 @@ Don't build any of these.
 Phase 1 is finished when every item below passes. Claude Code should check each one and report any it could not verify itself.
 
 - [ ] `npm install && npm start` works in a fresh copy on Windows, and startup prints the host link and LAN URLs
-- [ ] Rules engine tests pass for soft aces, blackjack, dealer on soft 17 both ways, 3:2 and 6:5 payouts, push, double and reshuffle
+- [ ] Rules engine tests pass for soft aces, blackjack, dealer on soft 17 both ways, 3:2 and 6:5 payouts, push, double, split (allowed and refused cases, split aces, 21 after split paying 1:1, double after split, each hand settled separately) and reshuffle
 - [ ] An automated test with 2 simulated WebSocket clients joins, bets and plays 3 rounds without errors
 - [ ] In two browser tabs, the host's setting changes show up for the other player, and settings lock after Start
 - [ ] Two players can play 5 full rounds with the correct chip counts after each
@@ -252,7 +266,7 @@ Phase 1 is finished when every item below passes. Claude Code should check each 
 - [ ] Out-of-turn actions, non-host settings changes and bets above the limit are rejected without a crash
 - [ ] The hole card never appears in a message before it's revealed, and the host token never appears in any message
 - [ ] A phone on the same Wi-Fi joins through the LAN URL and can play
-- [ ] Sounds play, and the mute button works
+- [ ] Sounds play (including on iPhone Safari), and the mute button works
 - [ ] No errors appear in the browser console or server log during the steps above
 
 Phase 2 is finished when:
