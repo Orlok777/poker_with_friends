@@ -515,9 +515,9 @@ export class Table {
     if (typeof amount !== 'number' || !Number.isInteger(amount)) {
       return this.sendError(conn, 'bet_invalid', 'A bet must be a whole number');
     }
-    const { minBet, maxBet } = this.settings;
-    if (amount < minBet || amount > maxBet) {
-      return this.sendError(conn, 'bet_invalid', `Bets must be between ${minBet} and ${maxBet}`);
+    const { minBet } = this.settings;
+    if (amount < minBet) {
+      return this.sendError(conn, 'bet_invalid', `The minimum bet is ${minBet}`);
     }
     if (amount > p.chips) return this.sendError(conn, 'insufficient_chips', 'You do not have enough chips');
     p.chips -= amount;

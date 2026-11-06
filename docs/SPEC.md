@@ -82,8 +82,7 @@ Use a token rather than "connections from localhost". Tunnel traffic also arrive
 | Max players | 6 | 1 to 7 |
 | Table password | None | Optional, any text |
 | Starting chips | 1,000 | 100 to 100,000 |
-| Minimum bet | 10 | 1 up to the maximum bet |
-| Maximum bet | 500 | The minimum bet up to the starting chips |
+| Minimum bet | 10 | 1 up to the starting chips |
 | Betting timer | 20 s; a player with no bet sits out the round | 10 to 60 s |
 | Turn timer | 30 s; the player stands automatically when it runs out | 10 to 120 s, or off |
 | Decks, dealer on soft 17, blackjack payout, double down | As in Game rules | As in Game rules |
@@ -104,7 +103,7 @@ Chips belong to a username, are saved on the host's PC, and survive server resta
 
 Each round runs through seven phases in order and then starts again from betting. The server owns the current phase, and clients only display it.
 
-1. **Betting:** each seated player bets between the minimum and maximum before the betting timer ends. Anyone who doesn't bet sits out the round.
+1. **Betting:** each seated player bets anything from the minimum bet up to their own chips before the betting timer ends. Anyone who doesn't bet sits out the round.
 2. **Deal:** one card face up to each player in seat order, then the dealer's up card, then a second card to each player, then the dealer's hole card face down. Cards are dealt about 300 ms apart.
 3. **Dealer peek:** if the up card is an ace or a 10-value card, the server checks for dealer blackjack. If the dealer has it, the hole card is revealed and the round skips to settle.
 4. **Player turns:** in seat order, left to right. Each player chooses Hit, Stand or Double until they stand, bust or reach 21. Blackjack and 21 stand automatically.

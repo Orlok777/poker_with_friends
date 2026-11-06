@@ -32,7 +32,6 @@ export interface Settings {
   password: string;
   startingChips: number;
   minBet: number;
-  maxBet: number;
   bettingSeconds: number;
   /** null turns the turn timer off. */
   turnSeconds: number | null;
@@ -50,7 +49,6 @@ export const DEFAULT_SETTINGS: Settings = {
   password: '',
   startingChips: 1000,
   minBet: 10,
-  maxBet: 500,
   bettingSeconds: 20,
   turnSeconds: 30,
   decks: 5,
@@ -82,8 +80,7 @@ export function validateSettings(s: Settings): string | null {
     return `Starting chips must be ${L.startingChips.min} to ${L.startingChips.max}`;
   }
   if (!isInt(s.minBet) || s.minBet < 1) return 'Minimum bet must be at least 1';
-  if (!isInt(s.maxBet) || s.maxBet < s.minBet) return 'Maximum bet must be at least the minimum bet';
-  if (s.maxBet > s.startingChips) return 'Maximum bet can not be more than the starting chips';
+  if (s.minBet > s.startingChips) return 'Minimum bet can not be more than the starting chips';
   if (!isInt(s.bettingSeconds) || s.bettingSeconds < L.bettingSeconds.min || s.bettingSeconds > L.bettingSeconds.max) {
     return `Betting timer must be ${L.bettingSeconds.min} to ${L.bettingSeconds.max} seconds`;
   }

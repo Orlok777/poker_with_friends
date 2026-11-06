@@ -266,8 +266,9 @@ describe('validateSettings', () => {
     expect(bad({ decks: 9 })).not.toBeNull();
     expect(bad({ startingChips: 50 })).not.toBeNull();
     expect(bad({ minBet: 0 })).not.toBeNull();
-    expect(bad({ minBet: 600 })).not.toBeNull();
-    expect(bad({ maxBet: 2000 })).not.toBeNull();
+    expect(bad({ minBet: 600 })).toBeNull(); // no maximum bet any more
+    expect(bad({ minBet: 2000 })).not.toBeNull(); // more than the starting chips
+    expect('maxBet' in DEFAULT_SETTINGS).toBe(false);
     expect(bad({ bettingSeconds: 5 })).not.toBeNull();
     expect(bad({ turnSeconds: 5 })).not.toBeNull();
     expect(bad({ turnSeconds: null })).toBeNull();

@@ -26,7 +26,6 @@ const GROUPS: { title: string; fields: Field[] }[] = [
     title: 'Bets',
     fields: [
       { kind: 'int', key: 'minBet', label: 'Minimum bet', min: 1 },
-      { kind: 'int', key: 'maxBet', label: 'Maximum bet', min: 1 },
     ],
   },
   {

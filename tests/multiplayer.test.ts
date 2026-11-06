@@ -172,13 +172,13 @@ describe('host and settings', () => {
   it('rejects invalid settings and settings changes from a non-host', async () => {
     const { alex, bob } = await twoPlayers();
     expect((await bob.expectError({ type: 'update_settings', settings: { minBet: 50 } })).code).toBe('not_host');
-    expect((await alex.expectError({ type: 'update_settings', settings: { maxBet: 5000 } })).code).toBe('invalid_settings');
+    expect((await alex.expectError({ type: 'update_settings', settings: { minBet: 5000 } })).code).toBe('invalid_settings');
     expect((await alex.expectError({ type: 'update_settings', settings: { decks: 9 } })).code).toBe('invalid_settings');
     expect((await alex.expectError({ type: 'update_settings', settings: { minBet: 'ten' as unknown as number } })).code).toBe('invalid_settings');
     expect((await alex.expectError({ type: 'update_settings', settings: { maxPlayers: 1 } })).code).toBe('invalid_settings');
     expect((await bob.expectError({ type: 'start_game' })).code).toBe('not_host');
     expect(alex.state!.settings.minBet).toBe(10);
-    expect(alex.state!.settings.maxBet).toBe(500);
+    expect('maxBet' in alex.state!.settings).toBe(false);
     expect(alex.state!.started).toBe(false);
   });
 
@@ -309,8 +309,8 @@ describe('rejected messages', () => {
     // Betting phase
     expect((await bob.expectError({ type: 'action', action: 'hit' })).code).toBe('wrong_phase');
     expect((await bob.expectError({ type: 'place_bet', amount: 5 })).code).toBe('bet_invalid');
-    expect((await bob.expectError({ type: 'place_bet', amount: 501 })).code).toBe('bet_invalid');
-    expect((await bob.expectError({ type: 'place_bet', amount: 1_000_000 })).code).toBe('bet_invalid');
+    expect((await bob.expectError({ type: 'place_bet', amount: 1001 })).code).toBe('insufficient_chips');
+    expect((await bob.expectError({ type: 'place_bet', amount: 1_000_000 })).code).toBe('insufficient_chips');
     expect((await bob.expectError({ type: 'place_bet', amount: 12.5 })).code).toBe('bet_invalid');
     expect((await bob.expectError({ type: 'place_bet', amount: '50' as unknown as number })).code).toBe('bet_invalid');
     expect((await bob.expectError({ type: 'place_bet', amount: -50 })).code).toBe('bet_invalid');
@@ -350,7 +350,7 @@ describe('rejected messages', () => {
     const { srv } = await h.boot({ rigged });
     const alex = await h.client(srv);
     await alex.join('Alex', { hostToken: srv.hostToken });
-    alex.send({ type: 'update_settings', settings: { doubleRule: 'off', startingChips: 100, maxBet: 100 } });
+    alex.send({ type: 'update_settings', settings: { doubleRule: 'off', startingChips: 100 } });
     await alex.waitForState((s) => s.settings.doubleRule === 'off');
     alex.send({ type: 'reset_chips' });
     await alex.waitForState((s) => alex.me(s).chips === 100);
@@ -490,7 +490,7 @@ describe('chips and usernames', () => {
     const second = await h.boot({}, first.dataDir);
     const host = await h.client(second.srv);
     await host.join('Host', { hostToken: second.srv.hostToken });
-    host.send({ type: 'update_settings', settings: { startingChips: 5000, maxBet: 500 } });
+    host.send({ type: 'update_settings', settings: { startingChips: 5000 } });
     await host.waitForState((s) => s.settings.startingChips === 5000);
 
     const back = await h.client(second.srv);
@@ -519,5 +519,21 @@ describe('chips and usernames', () => {
     await bob.waitForState((s) => bob.me(s).bet === 100);
     expect((await bob.expectError({ type: 'reset_chips' })).code).toBe('cannot_reset');
     expect(bob.me().chips).toBe(900);
+  });
+});
+
+describe('bet limits', () => {
+  it('accepts any bet from the minimum up to the whole stack, with no maximum', async () => {
+    const rigged = cards('10 10 10 9 6 7');
+    const { alex, bob } = await twoPlayers({ rigged, timing: { bettingMs: 5000, turnMs: 5000 } });
+    alex.send({ type: 'start_game' });
+    await bob.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
+    expect((await bob.expectError({ type: 'place_bet', amount: 9 })).code).toBe('bet_invalid');
+    alex.send({ type: 'place_bet', amount: 750 }); // above the old 500 cap
+    await alex.waitForState((s) => alex.me(s).bet === 750);
+    expect(alex.me().chips).toBe(250);
+    bob.send({ type: 'place_bet', amount: 10 }); // the minimum itself
+    await bob.waitForState((s) => bob.me(s).bet === 10);
+    expect(bob.me().chips).toBe(990);
   });
 });

@@ -27,7 +27,7 @@ export function clearBusy(): void {
 function betCap(): number {
   const s = app.state;
   const self = me();
-  return s && self ? Math.min(s.settings.maxBet, self.chips) : 0;
+  return s && self ? self.chips : 0;
 }
 
 function setPending(value: number, from?: Element): void {
@@ -141,7 +141,7 @@ export function renderControls(): void {
   betBar.hidden = !(s.phase === 'betting' && seated && self.bet === 0 && s.deadline !== null);
   betBar.classList.toggle('out-of-chips', outOfChips);
   $('pending-bet').textContent = fmt(pendingBet);
-  $('bet-limits').textContent = `${fmt(s.settings.minBet)}–${fmt(s.settings.maxBet)}`;
+  $('bet-limits').textContent = `Min ${fmt(s.settings.minBet)}`;
   for (const b of document.querySelectorAll<HTMLButtonElement>('.chip-btn')) {
     b.disabled = !canBet || busy || pendingBet >= cap;
   }
