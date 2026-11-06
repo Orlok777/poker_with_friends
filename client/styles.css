@@ -785,6 +785,11 @@ button.big {
     grid-column: 1 / -1;
   }
 
+  /* Open seats would only take up room on a phone. */
+  .seat.empty {
+    display: none;
+  }
+
   .seat .name {
     font-size: 0.85rem;
   }

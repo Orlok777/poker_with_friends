@@ -60,7 +60,8 @@ export function lanAddresses(): string[] {
   const out: string[] = [];
   for (const addrs of Object.values(networkInterfaces())) {
     for (const a of addrs ?? []) {
-      if (a.family === 'IPv4' && !a.internal) out.push(a.address);
+      // 169.254.x.x is a self-assigned address that no other machine can use.
+      if (a.family === 'IPv4' && !a.internal && !a.address.startsWith('169.254.')) out.push(a.address);
     }
   }
   return out;
