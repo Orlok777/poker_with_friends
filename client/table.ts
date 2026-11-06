@@ -17,10 +17,12 @@ import {
 } from './cards.js';
 import { $, fmt, h, prefersReducedMotion } from './dom.js';
 import { icon } from './icons.js';
-import { playChip, playDeal } from './sound.js';
+import { playAllIn, playChip, playDeal, playShuffle } from './sound.js';
 
 let firstRender = true;
 let lastDeadline: number | null = null;
+/** The shoe reshuffle count at the last render; a rise means a reshuffle happened. */
+let lastShuffles: number | null = null;
 let timerTotal = 1;
 /** Results and bets already shown, so their entrance animation runs only once. */
 const seenResults = new Set<string>();
@@ -35,6 +37,7 @@ export function setBetSource(el: Element | null): void {
 export function resetTable(): void {
   firstRender = true;
   lastDeadline = null;
+  lastShuffles = null;
   seenResults.clear();
   seenBets.clear();
   handCounts.clear();
@@ -369,8 +372,12 @@ export function renderTable(s: TableState, self: PlayerView, pendingBet: number)
   const prev = app.prevState;
   if (prev && s.phase === 'betting') {
     const before = new Map(prev.players.map((p) => [p.id, betOf(p)]));
-    if (s.players.some((p) => betOf(p) > 0 && (before.get(p.id) ?? 0) === 0 && p.id !== app.myId)) playChip();
+    const newBets = s.players.filter((p) => betOf(p) > 0 && (before.get(p.id) ?? 0) === 0 && p.id !== app.myId);
+    if (newBets.some((p) => p.hands[0]?.allIn)) playAllIn();
+    else if (newBets.length > 0) playChip();
   }
+  if (lastShuffles !== null && s.shuffles > lastShuffles) playShuffle();
+  lastShuffles = s.shuffles;
   firstRender = false;
   tick();
 }

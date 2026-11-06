@@ -4,7 +4,7 @@ import { clearBusy, getPendingBet, initControls, renderControls } from './contro
 import { $, storageGet, storageSet } from './dom.js';
 import { hydrateIcons, icon } from './icons.js';
 import { initPanels, renderLog, renderRules, resetPanels } from './panels.js';
-import { isMuted, playLose, playWin, setMuted, unlockAudio } from './sound.js';
+import { isMuted, playLose, playPayout, playWin, setMuted, unlockAudio } from './sound.js';
 import { renderTable, resetTable } from './table.js';
 import { initWaiting, renderWaiting, resyncSettings } from './waiting.js';
 
@@ -127,7 +127,10 @@ function handle(msg: ServerMsg): void {
       // With a split there are two results: the sound follows the net result.
       const mine = msg.results.filter((r) => r.playerId === app.myId);
       const net = mine.reduce((sum, r) => sum + r.delta, 0);
-      if (net > 0) playWin();
+      if (net > 0) {
+        playPayout();
+        playWin();
+      }
       else if (net < 0) playLose();
       return;
     }

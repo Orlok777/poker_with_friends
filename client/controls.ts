@@ -4,7 +4,7 @@ import type { ActionName } from '../shared/types.js';
 import { app, me, resetChips, send } from './app.js';
 import { slideFrom, ringEl } from './cards.js';
 import { $, fmt, h } from './dom.js';
-import { playChip } from './sound.js';
+import { playAllIn, playChip } from './sound.js';
 import { betOf, setBetSource, updatePendingBet } from './table.js';
 
 const CHIP_VALUES = [10, 25, 100, 500];
@@ -85,7 +85,7 @@ function onAllInClick(): void {
   allInArmed = false;
   actionBusy = true;
   pendingBet = self.chips;
-  playChip();
+  playAllIn();
   setBetSource($('pending-bet'));
   send({ type: 'place_bet', amount: self.chips });
   renderControls();

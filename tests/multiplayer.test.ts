@@ -770,3 +770,21 @@ describe('split', () => {
     expect(alex.me(settled).chips).toBe(800); // 11 and 15 both lose to 17: 1000 - 200
   });
 });
+
+describe('shoe reshuffles', () => {
+  it('counts reshuffles in table_state so clients can play a sound', async () => {
+    const { srv } = await h.boot();
+    const alex = await h.client(srv);
+    await alex.join('Alex', { hostToken: srv.hostToken });
+    alex.send({ type: 'update_settings', settings: { decks: 1 } });
+    await alex.waitForState((s) => s.settings.decks === 1);
+    expect(alex.state!.shuffles).toBe(0);
+    alex.send({ type: 'set_ready', ready: true });
+    alex.autoPlay(10, () => 'stand');
+    alex.send({ type: 'start_game' });
+    // A single deck is 75% dealt after a few rounds, so the shoe is reshuffled before long.
+    const st = await alex.waitForState((s) => s.shuffles >= 1, 12000);
+    expect(st.shuffles).toBeGreaterThanOrEqual(1);
+    expect(st.log.some((l) => l.text.includes('Shuffling a new shoe'))).toBe(true);
+  });
+});

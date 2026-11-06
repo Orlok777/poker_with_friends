@@ -190,6 +190,8 @@ export interface TableState {
   /** Server clock when this state was sent, so clients can correct for clock differences. */
   serverNow: number;
   round: number;
+  /** Goes up by one every time the shoe is reshuffled (not for the first shuffle). */
+  shuffles: number;
   log: LogEntry[];
 }
 

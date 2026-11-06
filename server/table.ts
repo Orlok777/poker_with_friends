@@ -151,6 +151,8 @@ export class Table {
   private logEntries: LogEntry[] = [];
   private logId = 0;
   private noBetsLogged = false;
+  /** Counts reshuffles, so clients can play a sound when it goes up. */
+  private shuffles = 0;
   private closed = false;
 
   private readonly store: PlayerStore;
@@ -490,6 +492,7 @@ export class Table {
 
     if (this.shoe && this.shoe.needsReshuffle()) {
       this.shoe.shuffle();
+      this.shuffles++;
       this.addLog('Shuffling a new shoe');
     }
     this.assignSeats();
@@ -580,6 +583,7 @@ export class Table {
     const card = shoe.draw(this.cardsOnTable());
     if (shoe.autoReshuffled) {
       shoe.autoReshuffled = false;
+      this.shuffles++;
       this.addLog('The shoe ran out, shuffling a new one');
     }
     return card;
@@ -942,6 +946,7 @@ export class Table {
       deadline: this.deadline,
       serverNow: Date.now(),
       round: this.round,
+      shuffles: this.shuffles,
       log: this.logEntries.map((e) => ({ ...e })),
     };
   }

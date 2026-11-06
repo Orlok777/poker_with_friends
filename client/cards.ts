@@ -2,6 +2,7 @@
 
 import { isHiddenCard, type CardView, type HandView } from '../shared/types.js';
 import { $, fmt, h, prefersReducedMotion } from './dom.js';
+import { playFlip } from './sound.js';
 
 const SUIT_CHAR = { S: '♠', H: '♥', D: '♦', C: '♣' } as const;
 const SUIT_NAME = { S: 'spades', H: 'hearts', D: 'diamonds', C: 'clubs' } as const;
@@ -70,6 +71,7 @@ export function handEl(key: string, cards: CardView[], animate: boolean): { el: 
 export function runCardAnimations(): void {
   const deal = toDeal.splice(0);
   const flip = toFlip.splice(0);
+  if (flip.length > 0) playFlip();
   if (prefersReducedMotion()) {
     for (const el of [...deal, ...flip]) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150 });
     return;
