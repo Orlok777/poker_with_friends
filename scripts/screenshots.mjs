@@ -15,6 +15,8 @@ const OUT = join(process.cwd(), 'screenshots');
 const VIEWPORTS = {
   desktop: { width: 1280, height: 800, isMobile: false },
   phone: { width: 390, height: 844, isMobile: true },
+  // Only when asked for by name: npm run screenshots -- laptop
+  laptop: { width: 1024, height: 700, isMobile: false, optional: true },
 };
 const only = process.argv.slice(2);
 
@@ -234,7 +236,7 @@ mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch({ channel: process.env.PW_CHANNEL ?? 'chrome' });
 try {
   for (const [label, vp] of Object.entries(VIEWPORTS)) {
-    if (only.length && !only.includes(label)) continue;
+    if (only.length ? !only.includes(label) : vp.optional) continue;
     console.log(`${label} ${vp.width}x${vp.height}`);
     await run(browser, label, vp);
   }
