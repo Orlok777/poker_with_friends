@@ -16,11 +16,7 @@
   --card-h: 82px;
 }
 .center-text { text-align: center; }
-.title.small { font-size: 1.3rem; margin: 0; color: var(--gold); }
-.panel h3 { font-size: 1rem; color: var(--gold); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 8px; }
-.panel label, .field-old { display: block; margin-bottom: 12px; color: var(--muted); font-size: 0.9rem; }
 .screen { max-width: 1100px; margin: 0 auto; padding: 12px 16px 28px; }
-select { display: block; width: 100%; margin-top: 4px; padding: 9px 10px; font: inherit; color: #fff; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.25); border-radius: 8px; }
 .button-row {
   display: flex;
   flex-wrap: wrap;
@@ -35,82 +31,6 @@ select { display: block; width: 100%; margin-top: 4px; padding: 9px 10px; font: 
   padding: 4px 0 8px;
   padding-right: 52px; /* room for the mute button */
 }
-/* ------------------------------------------------------------ waiting room */
-
-.wait-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-
-.player-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 6px;
-}
-
-.player-list li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.25);
-  border-radius: 8px;
-}
-
-.player-list .name {
-  flex: 1;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.badge {
-  font-size: 0.72rem;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.15);
-  color: var(--ink);
-  white-space: nowrap;
-}
-
-.badge.ready {
-  background: #2e8b57;
-}
-
-.badge.host {
-  background: var(--gold);
-  color: #2b1d00;
-}
-
-.badge.away {
-  background: #8a5a1c;
-}
-
-.settings-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 12px;
-}
-
-.settings-grid .field.wide {
-  grid-column: 1 / -1;
-}
-
-.settings-grid .inline-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.settings-grid .inline-row input[type='checkbox'] {
-  width: auto;
-  margin: 0;
-}
-
 /* ------------------------------------------------------------------- table */
 
 .timer-track {
@@ -527,14 +447,6 @@ select { display: block; width: 100%; margin-top: 4px; padding: 9px 10px; font: 
 /* ------------------------------------------------------------------- phones */
 
 @media (max-width: 760px) {
-  .wait-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
-
   .felt {
     aspect-ratio: auto;
     min-height: 0;

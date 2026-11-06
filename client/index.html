@@ -10,6 +10,7 @@
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e3a2b'/%3E%3Crect x='7' y='7' width='12' height='17' rx='2.5' fill='%23fbfbfa' transform='rotate(-10 13 15)'/%3E%3Crect x='13' y='8' width='12' height='17' rx='2.5' fill='%23f5b942' transform='rotate(8 19 16)'/%3E%3C/svg%3E"
     />
     <link rel="stylesheet" href="./styles/base.css" />
+    <link rel="stylesheet" href="./styles/waiting.css" />
     <link rel="stylesheet" href="./styles/legacy.css" />
   </head>
   <body>
@@ -39,28 +40,47 @@
     </section>
 
     <!-- Waiting room -->
-    <section id="screen-waiting" class="screen" hidden>
-      <header class="topbar">
-        <h2 class="title small">Waiting room</h2>
-        <span id="wait-hint" class="muted"></span>
+    <section id="screen-waiting" class="wait-screen" hidden>
+      <header class="app-bar">
+        <div class="brand brand-compact">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <span>Blackjack with Friends</span>
+        </div>
+        <div class="icon-row">
+          <button class="icon-btn mute-btn" type="button" aria-label="Mute sound" title="Mute sound"></button>
+          <button id="leave-btn-wait" class="icon-btn" type="button" aria-label="Leave the table" title="Leave the table" data-icon="leave"></button>
+        </div>
       </header>
+
+      <div class="wait-head">
+        <h1>Waiting room</h1>
+        <p id="wait-hint" class="muted"></p>
+      </div>
+
       <div class="wait-grid">
-        <div class="panel">
-          <h3>Players</h3>
+        <section class="panel players-panel" aria-labelledby="players-title">
+          <div class="panel-head">
+            <h2 id="players-title" class="panel-title">Players</h2>
+            <span id="player-count" class="muted num"></span>
+          </div>
           <ul id="player-list" class="player-list"></ul>
-          <div class="button-row">
-            <button id="ready-btn" type="button" class="primary">Ready</button>
-            <button id="reset-btn-wait" type="button">Reset chips</button>
-            <button id="leave-btn-wait" type="button" class="danger">Leave</button>
+          <div class="wait-actions">
+            <button id="ready-btn" type="button" class="ready-btn big">I'm ready</button>
+            <button id="reset-btn-wait" type="button" class="ghost big"><span data-icon="reset"></span>Reset chips</button>
           </div>
-          <div id="start-row" class="button-row" hidden>
-            <button id="start-btn" type="button" class="primary big">Start game</button>
+          <div id="start-row" class="start-row" hidden>
+            <button id="start-btn" type="button" class="primary big block">Start game</button>
+            <p id="start-hint" class="muted start-hint"></p>
           </div>
-        </div>
-        <div class="panel">
-          <h3>Table settings <span id="settings-note" class="muted"></span></h3>
-          <div id="settings-grid" class="settings-grid"></div>
-        </div>
+        </section>
+
+        <section class="panel settings-panel" aria-labelledby="settings-title">
+          <div class="panel-head">
+            <h2 id="settings-title" class="panel-title">Table settings</h2>
+            <span id="settings-note" class="muted settings-note"></span>
+          </div>
+          <div id="settings-grid" class="settings"></div>
+        </section>
       </div>
     </section>
 

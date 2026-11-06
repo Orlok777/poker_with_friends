@@ -114,7 +114,18 @@ async function run(browser, label, vp) {
     console.log(`  ${label}-${name}.png`);
   };
 
+  /** Presses a shortcut key; falls back to clicking the button (and says so) when the key does nothing. */
+  const pressOrClick = async (key, selector, done) => {
+    await page.keyboard.press(key);
+    for (let i = 0; i < 20 && !done(); i++) await sleep(50);
+    if (!done()) {
+      console.warn(`  ! ${label}: key "${key}" did nothing, clicking ${selector}`);
+      await page.click(selector);
+    }
+  };
+
   const bots = [];
+  let serverClosed = false;
   try {
     await page.goto(`${base}/?host=shots`);
     await page.waitForSelector('#join-name', { state: 'visible' });
@@ -137,6 +148,24 @@ async function run(browser, label, vp) {
     await alex.waitFor((s) => s.players.filter((p) => p.ready).length === 2, 'ready');
     await shot('2-waiting');
 
+    // The same room as a player who is not the host: settings are read only.
+    const guestContext = await browser.newContext({
+      viewport: { width: vp.width, height: vp.height },
+      isMobile: vp.isMobile,
+      hasTouch: vp.isMobile,
+    });
+    const guest = await guestContext.newPage();
+    await guest.goto(base);
+    await guest.fill('#join-name', 'Jordan');
+    await guest.click('#join-btn');
+    await guest.waitForSelector('#screen-waiting:not([hidden])');
+    await sleep(500);
+    await guest.screenshot({ path: join(OUT, `${label}-2b-waiting-guest.png`) });
+    console.log(`  ${label}-2b-waiting-guest.png`);
+    await guest.click('#leave-btn-wait');
+    await guestContext.close();
+    await alex.waitFor((s) => s.players.length === 4, 'guest left');
+
     await page.click('#ready-btn');
     riley.send({ type: 'set_ready', ready: true });
     await alex.waitFor((s) => s.players.filter((p) => p.ready).length === 4, 'all ready');
@@ -152,14 +181,14 @@ async function run(browser, label, vp) {
     await page.click('.chip-btn[data-value="25"]');
     await shot('3-betting');
 
-    await page.keyboard.press('Enter'); // confirms the bet
+    await pressOrClick('Enter', '#confirm-bet', () => alex.state.players.find((p) => p.name === 'Maya').bet > 0);
     await alex.waitFor((s) => s.phase === 'player_turns', 'player turns');
     await shot('4-my-turn');
 
-    await page.keyboard.press('h');
+    await pressOrClick('h', '#hit-btn', () => alex.state.players.find((p) => p.name === 'Maya').cards.length === 3);
     await alex.waitFor((s) => s.players.find((p) => p.name === 'Maya').cards.length === 3, 'Maya hits');
     await shot('4b-my-turn-after-hit');
-    await page.keyboard.press('s');
+    await pressOrClick('s', '#stand-btn', () => alex.state.turn !== alex.state.players.find((p) => p.name === 'Maya').id);
     await alex.waitFor((s) => s.turn === alex.id, "Alex's turn");
     await sleep(1500); // the countdown visibly runs
     await shot('5-other-turn');
@@ -187,11 +216,16 @@ async function run(browser, label, vp) {
       await rulesBtn.click();
       await shot('9-rules');
     }
+
+    await server.close();
+    serverClosed = true;
+    await page.waitForSelector('#screen-lost:not([hidden])');
+    await shot('10-connection-lost');
   } finally {
     if (errors.length) console.warn(`  ! ${label}: console errors:\n    ${errors.join('\n    ')}`);
     for (const b of bots) b.close();
     await context.close();
-    await server.close();
+    if (!serverClosed) await server.close();
     rmSync(dataDir, { recursive: true, force: true });
   }
 }

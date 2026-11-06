@@ -1,0 +1,446 @@
+/* Waiting room, plus the app bar it shares with the table. */
+
+.app-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 56px;
+}
+
+.brand-compact {
+  gap: 10px;
+  font-weight: 700;
+  font-size: var(--fs-md);
+}
+
+.brand-compact .brand-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+}
+
+.brand-compact .brand-mark::before,
+.brand-compact .brand-mark::after {
+  width: 12px;
+  height: 17px;
+  top: 7px;
+  border-radius: 3px;
+}
+
+.brand-compact .brand-mark::before {
+  left: 7px;
+}
+
+.brand-compact .brand-mark::after {
+  left: 13px;
+}
+
+.icon-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wait-screen {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 8px 24px 32px;
+}
+
+.wait-head {
+  margin: 20px 0 20px;
+}
+
+.wait-head h1 {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.wait-head p {
+  margin-top: 4px;
+}
+
+.wait-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+/* ------------------------------------------------------------- players */
+
+.player-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.player-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+}
+
+.player-row.away {
+  opacity: 0.6;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--surface-3);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.avatar.is-host {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.who {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+}
+
+.who-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.who-name .name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.who-chips {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.tag {
+  flex: none;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  color: var(--text-muted);
+}
+
+.tag-accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.ready-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+
+.ready-pill::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.ready-pill.is-ready {
+  color: var(--win);
+}
+
+.kick-btn {
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border-color: transparent;
+}
+
+@media (hover: hover) {
+  .kick-btn:hover:not(:disabled) {
+    color: #fda4af;
+    background: rgba(244, 63, 94, 0.12);
+  }
+}
+
+.kick-btn svg.icon {
+  width: 16px;
+  height: 16px;
+}
+
+.wait-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.ready-btn {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: transparent;
+}
+
+@media (hover: hover) {
+  .ready-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+}
+
+.ready-btn svg.icon {
+  display: none;
+}
+
+.ready-btn.is-ready {
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(34, 197, 94, 0.45);
+  color: #86efac;
+}
+
+.ready-btn.is-ready svg.icon {
+  display: block;
+}
+
+@media (hover: hover) {
+  .ready-btn.is-ready:hover:not(:disabled) {
+    background: rgba(34, 197, 94, 0.22);
+  }
+}
+
+.start-row {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.start-hint {
+  margin-top: 8px;
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.start-hint:empty {
+  display: none;
+}
+
+/* ------------------------------------------------------------ settings */
+
+.settings-note {
+  font-size: var(--fs-sm);
+}
+
+.settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 28px;
+}
+
+.setting-group {
+  display: grid;
+  align-content: start;
+}
+
+.group-title {
+  margin: 6px 0 4px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  border-bottom: 1px solid var(--line);
+}
+
+.setting-group .setting-row:last-child {
+  border-bottom: 0;
+}
+
+.setting-label {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.setting-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.num-input {
+  width: 88px;
+  height: 36px;
+  text-align: right;
+}
+
+.text-input {
+  width: 150px;
+  height: 36px;
+}
+
+.with-unit {
+  position: relative;
+  display: inline-flex;
+}
+
+.with-unit .num-input {
+  padding-right: 26px;
+}
+
+.with-unit .unit {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+/* Hide the number spinners; typing is quicker and they clutter the row. */
+.num-input::-webkit-outer-spin-button,
+.num-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.num-input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  background: var(--field);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+}
+
+.segmented button {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 13px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+@media (hover: hover) {
+  .segmented button:hover:not(:disabled) {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+}
+
+.segmented button[aria-checked='true'] {
+  background: var(--surface-hover);
+  color: var(--text);
+  box-shadow: var(--shadow-1);
+}
+
+/* Read only for players who are not the host: the chosen value stays readable. */
+.segmented button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.segmented button:disabled:not([aria-checked='true']) {
+  color: var(--text-faint);
+}
+
+.segmented:has(button:disabled) {
+  border-color: var(--line);
+}
+
+/* --------------------------------------------------------------- narrow */
+
+@media (max-width: 980px) {
+  .settings {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .wait-screen {
+    padding: 4px 16px 24px;
+  }
+
+  .wait-head {
+    margin: 8px 0 16px;
+  }
+
+  .wait-head h1 {
+    font-size: 24px;
+  }
+
+  .wait-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .panel {
+    padding: 16px;
+  }
+
+  .brand-compact span {
+    font-size: var(--fs-sm);
+  }
+}
+
+/* The host's main action is Start, so Ready steps back for them. */
+.ready-btn.for-host:not(.is-ready) {
+  background: transparent;
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+@media (hover: hover) {
+  .ready-btn.for-host:not(.is-ready):hover:not(:disabled) {
+    background: var(--surface-hover);
+  }
+}
+
+/* Temporary: the floating mute button goes away once the table has its own icon row. */
+body:has(#screen-waiting:not([hidden])) .icon-btn.floating {
+  display: none;
+}

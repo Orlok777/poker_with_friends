@@ -168,8 +168,10 @@ button {
     transform var(--t-fast) var(--ease);
 }
 
-button:hover:not(:disabled) {
-  background: var(--surface-hover);
+@media (hover: hover) {
+  button:hover:not(:disabled) {
+    background: var(--surface-hover);
+  }
 }
 
 button:active:not(:disabled) {
@@ -187,8 +189,10 @@ button.primary {
   color: var(--accent-ink);
 }
 
-button.primary:hover:not(:disabled) {
-  background: var(--accent-hover);
+@media (hover: hover) {
+  button.primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
 }
 
 button.danger {
@@ -197,8 +201,10 @@ button.danger {
   color: #fda4af;
 }
 
-button.danger:hover:not(:disabled) {
-  background: rgba(244, 63, 94, 0.12);
+@media (hover: hover) {
+  button.danger:hover:not(:disabled) {
+    background: rgba(244, 63, 94, 0.12);
+  }
 }
 
 button.ghost {
@@ -229,8 +235,10 @@ button.block {
   background: var(--surface-2);
 }
 
-.icon-btn:hover:not(:disabled) {
-  color: var(--text);
+@media (hover: hover) {
+  .icon-btn:hover:not(:disabled) {
+    color: var(--text);
+  }
 }
 
 .icon-btn.floating {

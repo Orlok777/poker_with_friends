@@ -9,42 +9,11 @@ import {
   type Settings,
   type TableState,
 } from '../shared/types.js';
+import { app, confirmKick, isHost, me, resetChips, send, toast } from './app.js';
+import { $, fmt, h, storageGet, storageSet } from './dom.js';
 import { hydrateIcons, icon } from './icons.js';
+import { initWaiting, renderWaiting, resyncSettings } from './waiting.js';
 import { isMuted, playChip, playDeal, playLose, playWin, setMuted, unlockAudio } from './sound.js';
-
-// ------------------------------------------------------------------ helpers
-
-function $<T extends HTMLElement = HTMLElement>(id: string): T {
-  const node = document.getElementById(id);
-  if (!node) throw new Error(`Missing element #${id}`);
-  return node as T;
-}
-
-function h<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (cls) node.className = cls;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-const fmt = (n: number): string => n.toLocaleString('en-US');
-
-function storageGet(key: string, area: Storage = localStorage): string | null {
-  try {
-    return area.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function storageSet(key: string, value: string | null, area: Storage = localStorage): void {
-  try {
-    if (value === null) area.removeItem(key);
-    else area.setItem(key, value);
-  } catch {
-    // Storage can be blocked (private windows). Everything still works without it.
-  }
-}
 
 // ------------------------------------------------------------------ session
 
@@ -81,16 +50,10 @@ const hostToken: string | null = (() => {
 
 // -------------------------------------------------------------------- state
 
-let ws: WebSocket | null = null;
-let joined = false;
-let myId: string | null = null;
-let state: TableState | null = null;
-let prevState: TableState | null = null;
 let serverInfo: Extract<ServerMsg, { type: 'server_info' }> | null = null;
 let joinAttempt: { username: string; password: string; auto: boolean } | null = null;
 let kicked = false;
 let lostNote: string | null = null;
-let clockOffset = 0;
 let pendingBet = 0;
 let actionBusy = false;
 let lastDeadline: number | null = null;
@@ -105,22 +68,14 @@ function showScreen(name: ScreenName | null): void {
   for (const s of SCREENS) $(`screen-${s}`).hidden = s !== name;
 }
 
-function toast(message: string): void {
-  const node = $('toast');
-  node.textContent = message;
-  node.hidden = false;
-  window.clearTimeout((toast as unknown as { t?: number }).t);
-  (toast as unknown as { t?: number }).t = window.setTimeout(() => (node.hidden = true), 4500);
-}
-
 // --------------------------------------------------------------- connection
 
 function connect(): void {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const sock = new WebSocket(`${proto}//${location.host}`);
-  ws = sock;
+  app.ws = sock;
   sock.onmessage = (ev) => {
-    if (sock !== ws) return;
+    if (sock !== app.ws) return;
     try {
       handle(JSON.parse(String(ev.data)) as ServerMsg);
     } catch (err) {
@@ -128,8 +83,8 @@ function connect(): void {
     }
   };
   sock.onclose = () => {
-    if (sock !== ws) return;
-    joined = false;
+    if (sock !== app.ws) return;
+    app.joined = false;
     if (kicked) return; // the kicked screen is already showing
     $('lost-note').textContent =
       lostNote ?? 'The server stopped or your connection dropped. Your chips are saved up to the last finished round.';
@@ -138,10 +93,6 @@ function connect(): void {
   sock.onerror = () => {
     // onclose follows and shows the Connection lost screen.
   };
-}
-
-function send(msg: ClientMsg): void {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
 
 function doJoin(username: string, password: string, auto: boolean): void {
@@ -159,7 +110,7 @@ function handle(msg: ServerMsg): void {
     case 'server_info': {
       serverInfo = msg;
       $('join-password-row').hidden = !msg.passwordRequired;
-      if (joined) return;
+      if (app.joined) return;
       const session = loadSession();
       if (session && session.token && !joinAttempt) {
         doJoin(session.username, session.password, true); // refresh or reconnect
@@ -170,8 +121,8 @@ function handle(msg: ServerMsg): void {
       return;
     }
     case 'joined': {
-      joined = true;
-      myId = msg.playerId;
+      app.joined = true;
+      app.myId = msg.playerId;
       lostNote = null;
       if (joinAttempt) {
         saveSession({ username: joinAttempt.username, token: msg.reconnectToken, password: joinAttempt.password });
@@ -181,21 +132,21 @@ function handle(msg: ServerMsg): void {
       return;
     }
     case 'table_state': {
-      prevState = state;
-      state = msg;
-      clockOffset = msg.serverNow - Date.now();
+      app.prevState = app.state;
+      app.state = msg;
+      app.clockOffset = msg.serverNow - Date.now();
       render();
       return;
     }
     case 'round_result': {
-      const mine = msg.results.find((r) => r.playerId === myId);
+      const mine = msg.results.find((r) => r.playerId === app.myId);
       if (mine?.outcome === 'win' || mine?.outcome === 'blackjack') playWin();
       else if (mine?.outcome === 'loss') playLose();
       return;
     }
     case 'kicked': {
       kicked = true;
-      joined = false;
+      app.joined = false;
       const s = loadSession();
       if (s) saveSession({ ...s, token: '' });
       $('kicked-note').textContent = msg.reason;
@@ -210,7 +161,7 @@ function handle(msg: ServerMsg): void {
 const JOIN_ERRORS = new Set(['bad_username', 'name_in_use', 'wrong_password', 'kicked', 'bad_message']);
 
 function handleError(code: string, message: string): void {
-  if (!joined && joinAttempt) {
+  if (!app.joined && joinAttempt) {
     const s = loadSession();
     if (s && (code === 'wrong_password' || code === 'name_in_use' || code === 'kicked')) {
       saveSession({ ...s, token: '', password: code === 'wrong_password' ? '' : s.password });
@@ -223,16 +174,16 @@ function handleError(code: string, message: string): void {
       return;
     }
   }
-  if (code === 'already_joined' && joined) {
+  if (code === 'already_joined' && app.joined) {
     // Another tab took over this player. The server closes this connection next.
     lostNote = message;
     return;
   }
   if (code === 'invalid_settings' || code === 'settings_locked') {
-    if (state) syncSettings(state, true);
+    resyncSettings();
   }
   actionBusy = false;
-  if (state) renderBars();
+  if (app.state) renderBars();
   toast(message);
 }
 
@@ -249,10 +200,10 @@ $('join-form').addEventListener('submit', (ev) => {
 });
 
 function goToJoinScreen(): void {
-  joined = false;
-  myId = null;
-  state = null;
-  prevState = null;
+  app.joined = false;
+  app.myId = null;
+  app.state = null;
+  app.prevState = null;
   joinAttempt = null;
   firstTableRender = true;
   shown.clear();
@@ -306,242 +257,18 @@ updateMuteButton();
 
 // ------------------------------------------------------------------- render
 
-function me(): PlayerView | undefined {
-  return state?.players.find((p) => p.id === myId);
-}
-
-function isHost(): boolean {
-  return state !== null && state.hostId === myId;
-}
-
 function render(): void {
-  if (!state || !myId) return;
+  if (!app.state || !app.myId) return;
   actionBusy = false;
   const self = me();
   if (!self) return;
-  if (state.phase === 'waiting') {
+  if (app.state.phase === 'waiting') {
     showScreen('waiting');
-    renderWaiting(state, self);
+    renderWaiting(app.state, self);
   } else {
     showScreen('table');
-    renderTable(state, self);
+    renderTable(app.state, self);
   }
-}
-
-// ------------------------------------------------------------- waiting room
-
-interface FieldDef {
-  key: keyof Settings;
-  label: string;
-  kind: 'int' | 'select' | 'password' | 'turn';
-  min?: number;
-  max?: number;
-  options?: [string, string][];
-  wide?: boolean;
-}
-
-const FIELDS: FieldDef[] = [
-  { key: 'maxPlayers', label: 'Max players', kind: 'int', ...SETTINGS_LIMITS.maxPlayers },
-  { key: 'startingChips', label: 'Starting chips', kind: 'int', ...SETTINGS_LIMITS.startingChips },
-  { key: 'minBet', label: 'Minimum bet', kind: 'int', min: 1 },
-  { key: 'maxBet', label: 'Maximum bet', kind: 'int', min: 1 },
-  { key: 'bettingSeconds', label: 'Betting timer (s)', kind: 'int', ...SETTINGS_LIMITS.bettingSeconds },
-  { key: 'turnSeconds', label: 'Turn timer (s)', kind: 'turn' },
-  { key: 'decks', label: 'Decks in the shoe', kind: 'int', ...SETTINGS_LIMITS.decks },
-  {
-    key: 'dealerHitsSoft17',
-    label: 'Dealer on soft 17',
-    kind: 'select',
-    options: [
-      ['false', 'Stands'],
-      ['true', 'Hits'],
-    ],
-  },
-  {
-    key: 'blackjackPayout',
-    label: 'Blackjack pays',
-    kind: 'select',
-    options: [
-      ['3:2', '3:2'],
-      ['6:5', '6:5'],
-    ],
-  },
-  {
-    key: 'doubleRule',
-    label: 'Double down',
-    kind: 'select',
-    options: [
-      ['any', 'Any two cards'],
-      ['9-11', '9 to 11 only'],
-      ['off', 'Off'],
-    ],
-  },
-  { key: 'password', label: 'Table password', kind: 'password', wide: true },
-];
-
-const settingInputs = new Map<string, HTMLInputElement | HTMLSelectElement>();
-let turnOffBox: HTMLInputElement | null = null;
-
-function sendSetting(patch: Partial<Settings>): void {
-  send({ type: 'update_settings', settings: patch });
-}
-
-function buildSettings(): void {
-  const grid = $('settings-grid');
-  for (const f of FIELDS) {
-    // The turn timer field holds its own "Off" label, and labels can not be nested.
-    const wrap: HTMLElement = f.kind === 'turn' ? h('div', 'field') : h('label', f.wide ? 'field wide' : 'field');
-    wrap.append(f.label);
-    let input: HTMLInputElement | HTMLSelectElement;
-    if (f.kind === 'select') {
-      const sel = h('select');
-      for (const [value, label] of f.options!) {
-        const o = h('option', undefined, label);
-        o.value = value;
-        sel.append(o);
-      }
-      sel.addEventListener('change', () => {
-        const v = sel.value;
-        sendSetting({ [f.key]: f.key === 'dealerHitsSoft17' ? v === 'true' : v } as Partial<Settings>);
-      });
-      input = sel;
-      wrap.append(sel);
-    } else if (f.kind === 'password') {
-      const inp = h('input');
-      inp.type = 'text';
-      inp.autocomplete = 'off';
-      inp.maxLength = 100;
-      inp.addEventListener('change', () => sendSetting({ password: inp.value }));
-      input = inp;
-      wrap.append(inp);
-    } else if (f.kind === 'turn') {
-      const inp = h('input');
-      inp.type = 'number';
-      inp.min = String(SETTINGS_LIMITS.turnSeconds.min);
-      inp.max = String(SETTINGS_LIMITS.turnSeconds.max);
-      const off = h('input');
-      off.type = 'checkbox';
-      const offLabel = h('label', 'inline-row');
-      offLabel.append(off, 'Off');
-      offLabel.style.marginBottom = '0';
-      inp.addEventListener('change', () => {
-        const n = Number(inp.value);
-        if (!Number.isInteger(n)) return toast('Turn timer must be a whole number of seconds');
-        sendSetting({ turnSeconds: n });
-      });
-      off.addEventListener('change', () => {
-        sendSetting({ turnSeconds: off.checked ? null : Number(inp.value) || 30 });
-      });
-      turnOffBox = off;
-      input = inp;
-      wrap.append(inp, offLabel);
-    } else {
-      const inp = h('input');
-      inp.type = 'number';
-      if (f.min !== undefined) inp.min = String(f.min);
-      if (f.max !== undefined) inp.max = String(f.max);
-      inp.addEventListener('change', () => {
-        const n = Number(inp.value);
-        if (inp.value === '' || !Number.isInteger(n)) {
-          toast(`${f.label} must be a whole number`);
-          if (state) syncSettings(state, true);
-          return;
-        }
-        sendSetting({ [f.key]: n } as Partial<Settings>);
-      });
-      input = inp;
-      wrap.append(inp);
-    }
-    settingInputs.set(f.key, input);
-    grid.append(wrap);
-  }
-}
-
-/** Copies the server's settings into the inputs, leaving the one being typed in alone unless forced. */
-function syncSettings(s: TableState, force = false): void {
-  const editable = isHost() && !s.started && s.phase === 'waiting';
-  const settings: PublicSettings = s.settings;
-  for (const f of FIELDS) {
-    const input = settingInputs.get(f.key)!;
-    const focused = document.activeElement === input;
-    input.disabled = !editable;
-    if (f.kind === 'password') {
-      const pw = input as HTMLInputElement;
-      if (!editable) {
-        pw.value = settings.passwordSet ? 'Set' : 'None';
-        pw.placeholder = '';
-      } else {
-        if (pw.value === 'Set' || pw.value === 'None') pw.value = '';
-        pw.placeholder = settings.passwordSet ? 'Password is set. Type to change.' : 'None';
-      }
-      continue;
-    }
-    if (focused && !force) continue;
-    if (f.kind === 'turn') {
-      const inp = input as HTMLInputElement;
-      inp.value = settings.turnSeconds === null ? '' : String(settings.turnSeconds);
-      inp.disabled = !editable || settings.turnSeconds === null;
-      if (turnOffBox) {
-        turnOffBox.checked = settings.turnSeconds === null;
-        turnOffBox.disabled = !editable;
-      }
-    } else if (f.kind === 'select') {
-      input.value = String(settings[f.key as keyof PublicSettings]);
-    } else {
-      (input as HTMLInputElement).value = String(settings[f.key as keyof PublicSettings]);
-    }
-  }
-}
-
-function confirmKick(p: PlayerView): void {
-  if (confirm(`Kick ${p.name}? They can not rejoin until the server restarts.`)) {
-    send({ type: 'kick_player', playerId: p.id });
-  }
-}
-
-function renderWaiting(s: TableState, self: PlayerView): void {
-  const host = isHost();
-  $('wait-hint').textContent = host
-    ? 'You are the host. Start the game when players are ready.'
-    : 'Waiting for the host to start the game.';
-  $('settings-note').textContent = host ? '' : '(read only)';
-
-  const list = $('player-list');
-  list.replaceChildren();
-  for (const p of s.players) {
-    const li = h('li');
-    li.append(h('span', 'name', p.name), h('span', 'muted', `${fmt(p.chips)} chips`));
-    if (p.id === s.hostId) li.append(h('span', 'badge host', 'Host'));
-    if (!p.connected) li.append(h('span', 'badge away', 'Away'));
-    li.append(h('span', p.ready ? 'badge ready' : 'badge', p.ready ? 'Ready' : 'Not ready'));
-    if (host && p.id !== myId) {
-      const kick = h('button', 'danger small', 'Kick');
-      kick.type = 'button';
-      kick.addEventListener('click', () => confirmKick(p));
-      li.append(kick);
-    }
-    list.append(li);
-  }
-
-  const ready = $<HTMLButtonElement>('ready-btn');
-  ready.textContent = self.ready ? 'Not ready' : 'Ready';
-  ready.classList.toggle('primary', !self.ready);
-  $('start-row').hidden = !host;
-  $<HTMLButtonElement>('start-btn').disabled = !s.players.some((p) => p.ready);
-  syncSettings(s);
-}
-
-$('ready-btn').addEventListener('click', () => {
-  const self = me();
-  if (self) send({ type: 'set_ready', ready: !self.ready });
-});
-$('start-btn').addEventListener('click', () => send({ type: 'start_game' }));
-$('reset-btn-wait').addEventListener('click', resetChips);
-$('reset-btn-table').addEventListener('click', resetChips);
-
-function resetChips(): void {
-  if (!state) return;
-  if (confirm(`Reset your chips to ${fmt(state.settings.startingChips)}?`)) send({ type: 'reset_chips' });
 }
 
 // -------------------------------------------------------------------- cards
@@ -673,11 +400,11 @@ function seatEl(s: TableState, p: PlayerView | undefined, index: number, slot: n
     seat.dataset.seat = String(index);
     return seat;
   }
-  if (p.id === myId) seat.classList.add('me');
+  if (p.id === app.myId) seat.classList.add('me');
   if (s.turn === p.id) seat.classList.add('turn');
   if (!p.connected) seat.classList.add('away');
 
-  if (isHost() && p.id !== myId) {
+  if (isHost() && p.id !== app.myId) {
     const kick = h('button', 'kick', '✕');
     kick.type = 'button';
     kick.title = `Kick ${p.name}`;
@@ -786,9 +513,9 @@ function renderTable(s: TableState, self: PlayerView): void {
 
   // Sounds
   if (animate && newCardsThisRender > 0) playDeal();
-  if (prevState && s.phase === 'betting') {
-    const before = new Map(prevState.players.map((p) => [p.id, p.bet]));
-    if (s.players.some((p) => p.bet > 0 && (before.get(p.id) ?? 0) === 0 && p.id !== myId)) playChip();
+  if (app.prevState && s.phase === 'betting') {
+    const before = new Map(app.prevState.players.map((p) => [p.id, p.bet]));
+    if (s.players.some((p) => p.bet > 0 && (before.get(p.id) ?? 0) === 0 && p.id !== app.myId)) playChip();
   }
   firstTableRender = false;
   tick();
@@ -805,8 +532,8 @@ function buildBetBar(): void {
     b.setAttribute('aria-label', `Add ${v} to your bet`);
     b.addEventListener('click', () => {
       const self = me();
-      if (!state || !self) return;
-      const cap = Math.min(state.settings.maxBet, self.chips);
+      if (!app.state || !self) return;
+      const cap = Math.min(app.state.settings.maxBet, self.chips);
       pendingBet = Math.min(pendingBet + v, cap);
       playChip();
       renderBars();
@@ -843,7 +570,7 @@ for (const [id, action] of [
 
 /** Betting bar, action bar and the note under the table. */
 function renderBars(): void {
-  const s = state;
+  const s = app.state;
   const self = me();
   if (!s || !self || s.phase === 'waiting') return;
 
@@ -882,11 +609,11 @@ function renderBars(): void {
 // -------------------------------------------------------------------- timer
 
 function tick(): void {
-  if (!state || state.phase === 'waiting') return;
+  if (!app.state || app.state.phase === 'waiting') return;
   let secs = '';
   let fraction = 0;
-  if (state.deadline !== null) {
-    const remaining = Math.max(0, state.deadline - (Date.now() + clockOffset));
+  if (app.state.deadline !== null) {
+    const remaining = Math.max(0, app.state.deadline - (Date.now() + app.clockOffset));
     secs = ` · ${Math.ceil(remaining / 1000)}s`;
     fraction = Math.min(1, remaining / timerTotal);
   }
@@ -901,7 +628,8 @@ setInterval(tick, 100);
 // --------------------------------------------------------------------- init
 
 hydrateIcons();
-buildSettings();
+$('reset-btn-table').addEventListener('click', resetChips);
+initWaiting();
 buildBetBar();
 showScreen(null);
 connect();
