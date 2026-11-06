@@ -356,10 +356,11 @@
   color: #fda4af;
 }
 
+/* Sits on the left edge of the turn outline, clear of the card's corner index. */
 .hand-ring {
   position: absolute;
-  top: -18px;
-  left: -24px;
+  top: calc(50% - 23px);
+  left: -37px;
   z-index: 2;
   width: 46px;
   height: 46px;

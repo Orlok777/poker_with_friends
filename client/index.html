@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="./styles/base.css" />
     <link rel="stylesheet" href="./styles/waiting.css" />
     <link rel="stylesheet" href="./styles/table.css" />
-    <link rel="stylesheet" href="./styles/legacy.css" />
+    <link rel="stylesheet" href="./styles/controls.css" />
   </head>
   <body>
     <!-- Join -->
@@ -105,28 +105,31 @@
       </main>
 
       <footer class="table-controls">
-      <p id="watch-note" class="muted center-text" hidden></p>
+        <p id="watch-note" class="watch-note" hidden></p>
 
-      <div id="bet-bar" class="bar" hidden>
-        <div class="bar-line">
-          <span class="bar-label">Bet <strong id="pending-bet">0</strong></span>
-          <div id="chip-buttons" class="chip-buttons"></div>
+        <div id="bet-bar" class="bet-panel" hidden>
+          <div class="bet-head">
+            <div class="bet-total">
+              <span class="bet-caption">Your bet <span id="bet-limits" class="bet-limits num"></span></span>
+              <strong id="pending-bet" class="bet-big num">0</strong>
+            </div>
+            <span id="bet-ring-slot" class="bet-ring-slot"></span>
+          </div>
+          <div id="chip-buttons" class="chip-row" role="group" aria-label="Add chips to your bet"></div>
+          <div class="bet-actions">
+            <button id="clear-bet" type="button" class="ghost bet-tool" title="Clear the bet"><span data-icon="close"></span><span>Clear</span></button>
+            <button id="repeat-bet" type="button" class="ghost bet-tool" title="Repeat your last bet"><span data-icon="repeat"></span><span class="tool-label">Repeat</span><span id="repeat-amount" class="num"></span></button>
+            <button id="double-bet" type="button" class="ghost bet-tool" title="Double the bet"><span class="x2">×2</span></button>
+            <button id="reset-btn-table" type="button" class="primary bet-reset" hidden><span data-icon="reset"></span>Reset chips</button>
+            <button id="confirm-bet" type="button" class="primary confirm-btn"><span data-icon="check"></span>Confirm<kbd>Enter</kbd></button>
+          </div>
         </div>
-        <div class="bar-line">
-          <button id="clear-bet" type="button">Clear</button>
-          <button id="confirm-bet" type="button" class="primary">Confirm</button>
-          <button id="reset-btn-table" type="button">Reset chips</button>
-        </div>
-      </div>
 
-      <div id="action-bar" class="bar" hidden>
-        <div class="bar-line">
-          <button id="hit-btn" type="button" class="primary">Hit</button>
-          <button id="stand-btn" type="button">Stand</button>
-          <button id="double-btn" type="button">Double</button>
+        <div id="action-bar" class="action-bar" hidden>
+          <button id="hit-btn" type="button" class="action-btn act-hit"><span data-icon="hit"></span><span>Hit</span><kbd>H</kbd></button>
+          <button id="stand-btn" type="button" class="action-btn act-stand"><span data-icon="stand"></span><span>Stand</span><kbd>S</kbd></button>
+          <button id="double-btn" type="button" class="action-btn act-double"><span data-icon="double"></span><span>Double</span><kbd>D</kbd></button>
         </div>
-      </div>
-
       </footer>
     </section>
 

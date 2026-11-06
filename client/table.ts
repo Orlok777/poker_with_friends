@@ -52,7 +52,7 @@ function phaseText(s: TableState, self: PlayerView): { text: string; tone: '' | 
     case 'betting':
       if (s.deadline === null) return { text: 'Waiting for players', tone: '', ring: false };
       if (self.seat !== null && self.bet === 0 && self.chips >= s.settings.minBet) {
-        return { text: 'Place your bet', tone: 'accent', ring: true };
+        return { text: 'Place your bet', tone: 'accent', ring: false }; // the bet panel has the ring
       }
       return { text: 'Waiting for bets', tone: '', ring: true };
     case 'dealing':
