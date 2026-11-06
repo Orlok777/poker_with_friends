@@ -228,6 +228,44 @@ export function initWaiting(): void {
   });
   $('start-btn').addEventListener('click', () => send({ type: 'start_game' }));
   $('reset-btn-wait').addEventListener('click', resetChips);
+  $('share-btn').addEventListener('click', () => void shareLink());
+  $('share-copy').addEventListener('click', () => void copyShareLink());
+  $<HTMLInputElement>('share-link').addEventListener('focus', (e) => (e.target as HTMLInputElement).select());
+}
+
+// ------------------------------------------------------------------- share
+
+/** Copies the invite link, falling back to selecting it for a manual copy. */
+async function copyShareLink(): Promise<void> {
+  const field = $<HTMLInputElement>('share-link');
+  try {
+    await navigator.clipboard.writeText(field.value);
+    toast('Invite link copied');
+  } catch {
+    field.focus();
+    field.select();
+    toast('Press Ctrl+C to copy the link');
+  }
+}
+
+/** Asks the server for its public address and shows it as a link to send to friends. */
+async function shareLink(): Promise<void> {
+  const btn = $<HTMLButtonElement>('share-btn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/public-ip');
+    const body = (await res.json().catch(() => ({}))) as { ip?: string; port?: number; error?: string };
+    if (!res.ok || !body.ip || !body.port) throw new Error(body.error ?? 'Could not find your public IP');
+    const host = body.ip.includes(':') ? `[${body.ip}]` : body.ip;
+    $<HTMLInputElement>('share-link').value = `http://${host}:${body.port}`;
+    $('share-port').textContent = String(body.port);
+    $('share-box').hidden = false;
+    await copyShareLink();
+  } catch (err) {
+    toast(err instanceof Error ? err.message : 'Could not find your public IP');
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /** Copies the server's settings into the controls, leaving the one being typed in alone unless forced. */

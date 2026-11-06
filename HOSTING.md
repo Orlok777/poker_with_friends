@@ -51,7 +51,7 @@ Chips are saved per username in `data\players.json`. Delete that file to give ev
 
 1. Give your PC a fixed LAN address (or a DHCP reservation in your router) so the forward keeps pointing at it.
 2. In your router's settings, forward **TCP port 3000** to your PC's LAN address, port 3000. Every router words this differently; look for "Port forwarding" or "Virtual server".
-3. Find your public IP (search "what is my IP"). Players open `http://YOUR_PUBLIC_IP:3000`.
+3. Click **Share** in the waiting room. The server looks up your public IP (it asks api.ipify.org), shows `http://YOUR_PUBLIC_IP:3000` and copies it to your clipboard. Send that link to players. (You can also search "what is my IP" and build the link yourself.) The link does not give host controls. If your router forwards a different outside port, change the port in the link.
 4. Allow Node.js through the firewall for **Public networks** too, if your PC treats the network as public.
 
 Everything is sent unencrypted over plain `http`, and anyone who learns your address can try to join. Set a **table password** in the waiting room, and stop the server when you are done.

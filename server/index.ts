@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
+import { isIP } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +33,8 @@ export interface ServerOptions {
   timing?: Partial<Timing>;
   /** Where warnings and errors go. Default console. */
   log?: (message: string) => void;
+  /** Finds this machine's public IP. Default asks api.ipify.org. For tests. */
+  publicIpLookup?: () => Promise<string>;
 }
 
 export interface RunningServer {
@@ -67,6 +70,19 @@ export function lanAddresses(): string[] {
   return out;
 }
 
+const IP_SERVICE = 'https://api.ipify.org';
+const IP_LOOKUP_TIMEOUT_MS = 4000;
+const IP_CACHE_MS = 5 * 60_000;
+
+/** Asks an outside service which address our traffic comes from. Throws when it can't tell. */
+export async function lookupPublicIp(): Promise<string> {
+  const res = await fetch(IP_SERVICE, { signal: AbortSignal.timeout(IP_LOOKUP_TIMEOUT_MS) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const ip = (await res.text()).trim();
+  if (!isIP(ip)) throw new Error('unexpected reply');
+  return ip;
+}
+
 export async function startServer(options: ServerOptions = {}): Promise<RunningServer> {
   const log = options.log ?? ((m: string) => console.error(m));
   const hostToken = options.hostToken ?? randomBytes(18).toString('base64url');
@@ -83,6 +99,23 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
 
   const app = express();
   app.disable('x-powered-by');
+
+  // The public address players can use, once the router forwards our port. Cached so a few
+  // clicks on the Share button make one outside request.
+  const lookupIp = options.publicIpLookup ?? lookupPublicIp;
+  let listenPort = options.port ?? 3000;
+  let cachedIp: { ip: string; at: number } | null = null;
+  app.get('/api/public-ip', async (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      if (!cachedIp || Date.now() - cachedIp.at > IP_CACHE_MS) cachedIp = { ip: await lookupIp(), at: Date.now() };
+      res.json({ ip: cachedIp.ip, port: listenPort });
+    } catch (err) {
+      log(`Warning: could not look up the public IP: ${err instanceof Error ? err.message : String(err)}`);
+      res.status(502).json({ error: 'Could not find your public IP. Check your internet connection.' });
+    }
+  });
+
   const clientDir = options.clientDir ?? findClientDir();
   if (clientDir) app.use(express.static(clientDir));
   else log('Warning: the client has not been built yet, so no web page will be served');
@@ -133,6 +166,7 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
 
   const address = httpServer.address();
   const port = typeof address === 'object' && address ? address.port : (options.port ?? 3000);
+  listenPort = port;
 
   return {
     port,

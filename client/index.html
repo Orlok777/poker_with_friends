@@ -67,6 +67,15 @@
           <div class="wait-actions">
             <button id="ready-btn" type="button" class="ready-btn big">I'm ready</button>
             <button id="reset-btn-wait" type="button" class="ghost big"><span data-icon="reset"></span>Reset chips</button>
+            <button id="share-btn" type="button" class="ghost big"><span data-icon="share"></span>Share</button>
+          </div>
+          <div id="share-box" class="share-box" hidden>
+            <label class="setting-label" for="share-link">Invite link</label>
+            <div class="share-field">
+              <input id="share-link" class="text-input num" type="text" readonly />
+              <button id="share-copy" type="button" class="ghost">Copy</button>
+            </div>
+            <p class="muted share-note">Works from outside your network only if TCP port <span id="share-port" class="num"></span> is forwarded on your router.</p>
           </div>
           <div id="start-row" class="start-row" hidden>
             <button id="start-btn" type="button" class="primary big block">Start game</button>
