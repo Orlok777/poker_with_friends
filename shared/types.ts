@@ -135,6 +135,8 @@ export interface PlayerView {
   soft: boolean;
   status: HandStatus;
   doubled: boolean;
+  /** True only for the player whose turn it is and who may double right now. */
+  canDouble: boolean;
   /** Set once the round is settled; cleared when the next round starts. */
   outcome: Outcome | null;
   /** Net chip change for the round, set together with `outcome`. */
