@@ -11,11 +11,10 @@
     />
     <link rel="stylesheet" href="./styles/base.css" />
     <link rel="stylesheet" href="./styles/waiting.css" />
+    <link rel="stylesheet" href="./styles/table.css" />
     <link rel="stylesheet" href="./styles/legacy.css" />
   </head>
   <body>
-    <button id="mute-btn" class="icon-btn floating mute-btn" type="button" aria-label="Mute sound" title="Mute sound"></button>
-
     <!-- Join -->
     <section id="screen-join" class="screen-center" hidden>
       <form id="join-form" class="panel narrow join-panel" autocomplete="off">
@@ -85,21 +84,27 @@
     </section>
 
     <!-- Table -->
-    <section id="screen-table" class="screen table-screen" hidden>
-      <header class="topbar">
-        <span id="round-label" class="muted"></span>
-        <span id="phase-label" class="phase-label"></span>
-        <button id="leave-btn-table" type="button" class="danger small">Leave</button>
+    <section id="screen-table" class="table-screen" hidden>
+      <header class="app-bar table-bar">
+        <span id="round-label" class="round-label"></span>
+        <div class="icon-row">
+          <button class="icon-btn mute-btn" type="button" aria-label="Mute sound" title="Mute sound"></button>
+          <button id="leave-btn-table" class="icon-btn" type="button" aria-label="Leave the table" title="Leave the table" data-icon="leave"></button>
+        </div>
       </header>
-      <div class="timer-track" aria-hidden="true"><span id="phase-timer-bar"></span></div>
 
-      <div class="felt">
-        <div id="shoe" class="shoe" aria-hidden="true"><i></i><i></i><i></i></div>
-        <div id="dealer" class="dealer"></div>
-        <div id="banner" class="banner" aria-live="polite"></div>
-        <div id="seats" class="seats"></div>
-      </div>
+      <main class="felt-wrap">
+        <div id="felt" class="felt">
+          <div id="shoe" class="shoe" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div id="dealer" class="dealer-spot"></div>
+          <div id="phase-pill" class="phase-pill" role="status" aria-live="polite"></div>
+          <p id="felt-rules" class="felt-rules"></p>
+          <div id="others" class="others"></div>
+          <div id="my-spot" class="my-spot"></div>
+        </div>
+      </main>
 
+      <footer class="table-controls">
       <p id="watch-note" class="muted center-text" hidden></p>
 
       <div id="bet-bar" class="bar" hidden>
@@ -122,10 +127,7 @@
         </div>
       </div>
 
-      <div class="panel log-panel">
-        <h3>Table log</h3>
-        <ul id="log" class="log"></ul>
-      </div>
+      </footer>
     </section>
 
     <!-- Connection lost -->

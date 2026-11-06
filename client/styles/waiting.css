@@ -440,7 +440,3 @@
   }
 }
 
-/* Temporary: the floating mute button goes away once the table has its own icon row. */
-body:has(#screen-waiting:not([hidden])) .icon-btn.floating {
-  display: none;
-}
