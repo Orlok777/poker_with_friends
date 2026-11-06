@@ -2,31 +2,38 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0b3d24" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0f0d" />
     <title>Blackjack with Friends</title>
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f5a35'/%3E%3Ctext x='16' y='24' font-size='22' text-anchor='middle' fill='%23e6c35c'%3E%E2%99%A0%3C/text%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e3a2b'/%3E%3Crect x='7' y='7' width='12' height='17' rx='2.5' fill='%23fbfbfa' transform='rotate(-10 13 15)'/%3E%3Crect x='13' y='8' width='12' height='17' rx='2.5' fill='%23f5b942' transform='rotate(8 19 16)'/%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles/base.css" />
+    <link rel="stylesheet" href="./styles/legacy.css" />
   </head>
   <body>
-    <button id="mute-btn" class="icon-btn" type="button" aria-label="Mute sound" title="Mute sound">🔊</button>
+    <button id="mute-btn" class="icon-btn floating mute-btn" type="button" aria-label="Mute sound" title="Mute sound"></button>
 
     <!-- Join -->
-    <section id="screen-join" class="screen center" hidden>
-      <form id="join-form" class="panel narrow" autocomplete="off">
-        <h1 class="title"><span class="suit-red">♥</span> Blackjack with Friends <span>♠</span></h1>
-        <label>
-          Username
-          <input id="join-name" name="username" maxlength="16" required spellcheck="false" />
+    <section id="screen-join" class="screen-center" hidden>
+      <form id="join-form" class="panel narrow join-panel" autocomplete="off">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div>
+            <h1>Blackjack with Friends</h1>
+            <p>Play for fake chips. Pick a name to sit down.</p>
+          </div>
+        </div>
+        <label class="field">
+          <span class="field-label">Username</span>
+          <input id="join-name" name="username" maxlength="16" required spellcheck="false" placeholder="Your name" />
         </label>
-        <label id="join-password-row" hidden>
-          Table password
+        <label id="join-password-row" class="field" hidden>
+          <span class="field-label">Table password</span>
           <input id="join-password" name="password" type="password" />
         </label>
-        <button type="submit" class="primary" id="join-btn">Join</button>
+        <button type="submit" class="primary big block" id="join-btn">Join table</button>
         <p id="join-error" class="error" role="alert"></p>
       </form>
     </section>
@@ -102,20 +109,22 @@
     </section>
 
     <!-- Connection lost -->
-    <section id="screen-lost" class="screen center" hidden>
-      <div class="panel narrow center-text">
+    <section id="screen-lost" class="screen-center" hidden>
+      <div class="panel narrow notice-panel">
+        <span class="notice-icon" data-icon="disconnected"></span>
         <h2>Connection lost</h2>
-        <p id="lost-note" class="muted">The server stopped or your connection dropped. Your chips are saved up to the last finished round.</p>
-        <button id="retry-btn" type="button" class="primary">Retry</button>
+        <p id="lost-note">The server stopped or your connection dropped. Your chips are saved up to the last finished round.</p>
+        <button id="retry-btn" type="button" class="primary big block">Retry</button>
       </div>
     </section>
 
     <!-- Kicked -->
-    <section id="screen-kicked" class="screen center" hidden>
-      <div class="panel narrow center-text">
+    <section id="screen-kicked" class="screen-center" hidden>
+      <div class="panel narrow notice-panel">
+        <span class="notice-icon" data-icon="kicked"></span>
         <h2>You were kicked</h2>
-        <p id="kicked-note" class="muted"></p>
-        <button id="kicked-back" type="button">Back to start</button>
+        <p id="kicked-note"></p>
+        <button id="kicked-back" type="button" class="big block">Back to start</button>
       </div>
     </section>
 

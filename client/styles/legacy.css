@@ -1,3 +1,4 @@
+/* Old styles still used by screens that are not redesigned yet. Removed screen by screen. */
 :root {
   --felt: #0f5a35;
   --felt-dark: #0a3d24;
@@ -13,189 +14,19 @@
   --danger: #b3382c;
   --card-w: 58px;
   --card-h: 82px;
-  font-family: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
-  color-scheme: dark;
 }
-
-* {
-  box-sizing: border-box;
-}
-
-[hidden] {
-  display: none !important;
-}
-
-html,
-body {
-  margin: 0;
-  min-height: 100%;
-}
-
-body {
-  background: radial-gradient(ellipse at top, #12663c 0%, #0a3d24 60%, #062616 100%) fixed;
-  color: var(--ink);
-  font-size: 16px;
-  line-height: 1.35;
-}
-
-h1,
-h2,
-h3 {
-  margin: 0 0 0.5rem;
-}
-
-h3 {
-  font-size: 1rem;
-  color: var(--gold);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.muted {
-  color: var(--muted);
-}
-
-.center-text {
-  text-align: center;
-}
-
-.title {
-  font-family: Georgia, 'Times New Roman', serif;
-  color: var(--gold);
-  text-align: center;
-  font-size: 1.9rem;
-  letter-spacing: 0.02em;
-}
-
-.title.small {
-  font-size: 1.3rem;
-  margin: 0;
-  text-align: left;
-}
-
-.suit-red {
-  color: #ef5350;
-}
-
-/* ------------------------------------------------------------ generic bits */
-
-.screen {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 12px 16px 28px;
-}
-
-.screen.center {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--panel-border);
-  border-radius: 12px;
-  padding: 16px;
-}
-
-.panel.narrow {
-  width: min(420px, 100%);
-}
-
-.panel label,
-.field {
-  display: block;
-  margin-bottom: 12px;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-input,
-select {
-  display: block;
-  width: 100%;
-  margin-top: 4px;
-  padding: 9px 10px;
-  font: inherit;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 8px;
-}
-
-input:disabled,
-select:disabled {
-  opacity: 0.65;
-  cursor: not-allowed;
-}
-
-input:focus-visible,
-select:focus-visible,
-button:focus-visible {
-  outline: 2px solid var(--gold);
-  outline-offset: 2px;
-}
-
-button {
-  font: inherit;
-  font-weight: 600;
-  padding: 9px 16px;
-  color: var(--ink);
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 8px;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-
-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-button.primary {
-  background: linear-gradient(#f0cf6c, #c9a23a);
-  color: #2b1d00;
-  border-color: #8a6b16;
-}
-
-button.primary:hover:not(:disabled) {
-  background: linear-gradient(#f6d97f, #d4ac41);
-}
-
-button.danger {
-  background: rgba(179, 56, 44, 0.35);
-  border-color: rgba(230, 120, 110, 0.6);
-}
-
-button.small {
-  padding: 5px 12px;
-  font-size: 0.85rem;
-}
-
-button.big {
-  padding: 12px 28px;
-  font-size: 1.1rem;
-}
-
+.center-text { text-align: center; }
+.title.small { font-size: 1.3rem; margin: 0; color: var(--gold); }
+.panel h3 { font-size: 1rem; color: var(--gold); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 8px; }
+.panel label, .field-old { display: block; margin-bottom: 12px; color: var(--muted); font-size: 0.9rem; }
+.screen { max-width: 1100px; margin: 0 auto; padding: 12px 16px 28px; }
+select { display: block; width: 100%; margin-top: 4px; padding: 9px 10px; font: inherit; color: #fff; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.25); border-radius: 8px; }
 .button-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
 }
-
-.error {
-  color: #ffb3a8;
-  min-height: 1.3em;
-  margin: 10px 0 0;
-}
-
 .topbar {
   display: flex;
   align-items: center;
@@ -204,34 +35,6 @@ button.big {
   padding: 4px 0 8px;
   padding-right: 52px; /* room for the mute button */
 }
-
-.icon-btn {
-  position: fixed;
-  top: 10px;
-  right: 12px;
-  z-index: 20;
-  width: 38px;
-  height: 38px;
-  padding: 0;
-  font-size: 1.1rem;
-  border-radius: 50%;
-}
-
-.toast {
-  position: fixed;
-  left: 50%;
-  bottom: 18px;
-  transform: translateX(-50%);
-  max-width: min(92vw, 460px);
-  padding: 10px 16px;
-  background: #3b1511;
-  border: 1px solid #c4574a;
-  border-radius: 10px;
-  color: #ffd8d2;
-  z-index: 30;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-}
-
 /* ------------------------------------------------------------ waiting room */
 
 .wait-grid {

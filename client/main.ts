@@ -9,6 +9,7 @@ import {
   type Settings,
   type TableState,
 } from '../shared/types.js';
+import { hydrateIcons, icon } from './icons.js';
 import { isMuted, playChip, playDeal, playLose, playWin, setMuted, unlockAudio } from './sound.js';
 
 // ------------------------------------------------------------------ helpers
@@ -286,17 +287,20 @@ $('kicked-back').addEventListener('click', () => {
 // -------------------------------------------------------------------- sound
 
 function updateMuteButton(): void {
-  const btn = $('mute-btn');
-  btn.textContent = isMuted() ? '🔇' : '🔊';
-  btn.setAttribute('aria-label', isMuted() ? 'Unmute sound' : 'Mute sound');
-  btn.title = isMuted() ? 'Unmute sound' : 'Mute sound';
+  for (const btn of document.querySelectorAll<HTMLButtonElement>('.mute-btn')) {
+    btn.replaceChildren(icon(isMuted() ? 'soundOff' : 'soundOn'));
+    btn.setAttribute('aria-label', isMuted() ? 'Unmute sound' : 'Mute sound');
+    btn.title = isMuted() ? 'Unmute sound' : 'Mute sound';
+  }
 }
 
-$('mute-btn').addEventListener('click', () => {
-  setMuted(!isMuted());
-  updateMuteButton();
-  unlockAudio();
-});
+for (const btn of document.querySelectorAll<HTMLButtonElement>('.mute-btn')) {
+  btn.addEventListener('click', () => {
+    setMuted(!isMuted());
+    updateMuteButton();
+    unlockAudio();
+  });
+}
 document.addEventListener('pointerdown', () => unlockAudio(), { once: true });
 updateMuteButton();
 
@@ -896,6 +900,7 @@ setInterval(tick, 100);
 
 // --------------------------------------------------------------------- init
 
+hydrateIcons();
 buildSettings();
 buildBetBar();
 showScreen(null);
