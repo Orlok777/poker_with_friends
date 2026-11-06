@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b3d24" />
+    <title>Blackjack with Friends</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <button id="mute-btn" class="icon-btn" type="button" aria-label="Mute sound" title="Mute sound">🔊</button>
+
+    <!-- Join -->
+    <section id="screen-join" class="screen center" hidden>
+      <form id="join-form" class="panel narrow" autocomplete="off">
+        <h1 class="title"><span class="suit-red">♥</span> Blackjack with Friends <span>♠</span></h1>
+        <label>
+          Username
+          <input id="join-name" name="username" maxlength="16" required spellcheck="false" />
+        </label>
+        <label id="join-password-row" hidden>
+          Table password
+          <input id="join-password" name="password" type="password" />
+        </label>
+        <button type="submit" class="primary" id="join-btn">Join</button>
+        <p id="join-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <!-- Waiting room -->
+    <section id="screen-waiting" class="screen" hidden>
+      <header class="topbar">
+        <h2 class="title small">Waiting room</h2>
+        <span id="wait-hint" class="muted"></span>
+      </header>
+      <div class="wait-grid">
+        <div class="panel">
+          <h3>Players</h3>
+          <ul id="player-list" class="player-list"></ul>
+          <div class="button-row">
+            <button id="ready-btn" type="button" class="primary">Ready</button>
+            <button id="reset-btn-wait" type="button">Reset chips</button>
+            <button id="leave-btn-wait" type="button" class="danger">Leave</button>
+          </div>
+          <div id="start-row" class="button-row" hidden>
+            <button id="start-btn" type="button" class="primary big">Start game</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Table settings <span id="settings-note" class="muted"></span></h3>
+          <div id="settings-grid" class="settings-grid"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Table -->
+    <section id="screen-table" class="screen table-screen" hidden>
+      <header class="topbar">
+        <span id="round-label" class="muted"></span>
+        <span id="phase-label" class="phase-label"></span>
+        <button id="leave-btn-table" type="button" class="danger small">Leave</button>
+      </header>
+      <div class="timer-track" aria-hidden="true"><span id="phase-timer-bar"></span></div>
+
+      <div class="felt">
+        <div id="shoe" class="shoe" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div id="dealer" class="dealer"></div>
+        <div id="banner" class="banner" aria-live="polite"></div>
+        <div id="seats" class="seats"></div>
+      </div>
+
+      <p id="watch-note" class="muted center-text" hidden></p>
+
+      <div id="bet-bar" class="bar" hidden>
+        <div class="bar-line">
+          <span class="bar-label">Bet <strong id="pending-bet">0</strong></span>
+          <div id="chip-buttons" class="chip-buttons"></div>
+        </div>
+        <div class="bar-line">
+          <button id="clear-bet" type="button">Clear</button>
+          <button id="confirm-bet" type="button" class="primary">Confirm</button>
+          <button id="reset-btn-table" type="button">Reset chips</button>
+        </div>
+      </div>
+
+      <div id="action-bar" class="bar" hidden>
+        <div class="bar-line">
+          <button id="hit-btn" type="button" class="primary">Hit</button>
+          <button id="stand-btn" type="button">Stand</button>
+          <button id="double-btn" type="button">Double</button>
+        </div>
+      </div>
+
+      <div class="panel log-panel">
+        <h3>Table log</h3>
+        <ul id="log" class="log"></ul>
+      </div>
+    </section>
+
+    <!-- Connection lost -->
+    <section id="screen-lost" class="screen center" hidden>
+      <div class="panel narrow center-text">
+        <h2>Connection lost</h2>
+        <p id="lost-note" class="muted">The server stopped or your connection dropped. Your chips are saved up to the last finished round.</p>
+        <button id="retry-btn" type="button" class="primary">Retry</button>
+      </div>
+    </section>
+
+    <!-- Kicked -->
+    <section id="screen-kicked" class="screen center" hidden>
+      <div class="panel narrow center-text">
+        <h2>You were kicked</h2>
+        <p id="kicked-note" class="muted"></p>
+        <button id="kicked-back" type="button">Back to start</button>
+      </div>
+    </section>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
