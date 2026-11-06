@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="./styles/waiting.css" />
     <link rel="stylesheet" href="./styles/table.css" />
     <link rel="stylesheet" href="./styles/controls.css" />
+    <link rel="stylesheet" href="./styles/panels.css" />
   </head>
   <body>
     <!-- Join -->
@@ -89,6 +90,11 @@
         <span id="round-label" class="round-label"></span>
         <div class="icon-row">
           <button class="icon-btn mute-btn" type="button" aria-label="Mute sound" title="Mute sound"></button>
+          <button id="rules-btn" class="icon-btn" type="button" aria-label="Table rules" title="Table rules" aria-expanded="false" aria-controls="rules-pop" data-icon="rules"></button>
+          <button id="log-btn" class="icon-btn log-btn" type="button" aria-label="Table log" title="Table log" aria-expanded="false" aria-controls="log-drawer">
+            <span data-icon="log"></span>
+            <span id="log-unread" class="unread num" hidden></span>
+          </button>
           <button id="leave-btn-table" class="icon-btn" type="button" aria-label="Leave the table" title="Leave the table" data-icon="leave"></button>
         </div>
       </header>
@@ -103,6 +109,20 @@
           <div id="my-spot" class="my-spot"></div>
         </div>
       </main>
+
+      <div id="rules-pop" class="rules-pop" role="dialog" aria-label="Table rules" hidden>
+        <h2 class="panel-title">Table rules</h2>
+        <dl id="rules-list" class="rules-list"></dl>
+      </div>
+
+      <div id="log-scrim" class="scrim" hidden></div>
+      <aside id="log-drawer" class="log-drawer" aria-labelledby="log-title" hidden>
+        <div class="drawer-head">
+          <h2 id="log-title" class="panel-title">Table log</h2>
+          <button id="log-close" class="icon-btn" type="button" aria-label="Close the log" title="Close" data-icon="close"></button>
+        </div>
+        <ol id="log" class="log-list" aria-live="polite"></ol>
+      </aside>
 
       <footer class="table-controls">
         <p id="watch-note" class="watch-note" hidden></p>

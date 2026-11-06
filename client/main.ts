@@ -3,6 +3,7 @@ import { app, me, send, toast } from './app.js';
 import { clearBusy, getPendingBet, initControls, renderControls } from './controls.js';
 import { $, storageGet, storageSet } from './dom.js';
 import { hydrateIcons, icon } from './icons.js';
+import { initPanels, renderLog, renderRules, resetPanels } from './panels.js';
 import { isMuted, playLose, playWin, setMuted, unlockAudio } from './sound.js';
 import { renderTable, resetTable } from './table.js';
 import { initWaiting, renderWaiting, resyncSettings } from './waiting.js';
@@ -190,6 +191,7 @@ function goToJoinScreen(): void {
   app.prevState = null;
   joinAttempt = null;
   resetTable();
+  resetPanels();
   const s = loadSession();
   if (s) saveSession({ ...s, token: '' });
   $<HTMLInputElement>('join-name').value = s?.username ?? '';
@@ -252,6 +254,8 @@ function render(): void {
     showScreen('table');
     renderControls(); // first, so a stale pending bet is cleared before the felt shows it
     renderTable(s, self, getPendingBet());
+    renderLog(s);
+    renderRules(s);
   }
 }
 
@@ -260,5 +264,6 @@ function render(): void {
 hydrateIcons();
 initWaiting();
 initControls();
+initPanels();
 showScreen(null);
 connect();
