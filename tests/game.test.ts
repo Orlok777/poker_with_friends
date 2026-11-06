@@ -11,6 +11,7 @@ import {
   isBlackjack,
   settleHand,
 } from '../server/game.js';
+import { DEFAULT_TIMING, ROUND_PAUSE_MS } from '../server/table.js';
 
 /** Builds cards from short text like "A K 7" (all spades, which does not matter for the rules). */
 function hand(text: string): Card[] {
@@ -271,5 +272,12 @@ describe('validateSettings', () => {
     expect(bad({ turnSeconds: 5 })).not.toBeNull();
     expect(bad({ turnSeconds: null })).toBeNull();
     expect(bad({ maxPlayers: 1.5 })).not.toBeNull();
+  });
+});
+
+describe('round pause', () => {
+  it('shows results for 2 seconds before the next betting phase', () => {
+    expect(ROUND_PAUSE_MS).toBe(2000);
+    expect(DEFAULT_TIMING.settleMs).toBe(ROUND_PAUSE_MS);
   });
 });

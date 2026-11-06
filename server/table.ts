@@ -54,10 +54,13 @@ export interface Timing {
   turnMs?: number;
 }
 
+/** How long results stay on screen before the next betting phase starts. */
+export const ROUND_PAUSE_MS = 2000;
+
 export const DEFAULT_TIMING: Timing = {
   dealMs: 300,
   dealerStepMs: 800,
-  settleMs: 5000,
+  settleMs: ROUND_PAUSE_MS,
   holdMs: 20_000,
 };
 

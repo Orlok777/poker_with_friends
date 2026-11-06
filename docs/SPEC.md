@@ -109,7 +109,7 @@ Each round runs through seven phases in order and then starts again from betting
 3. **Dealer peek:** if the up card is an ace or a 10-value card, the server checks for dealer blackjack. If the dealer has it, the hole card is revealed and the round skips to settle.
 4. **Player turns:** in seat order, left to right. Each player chooses Hit, Stand or Double until they stand, bust or reach 21. Blackjack and 21 stand automatically.
 5. **Dealer turn:** reveal the hole card, then draw until 17 or more, following the soft-17 rule. If every player has busted, the dealer draws no cards.
-6. **Settle:** a win pays 1:1, blackjack pays the set payout, a push returns the bet, and a loss takes it. Chips are saved, and results stay on screen for 5 s.
+6. **Settle:** a win pays 1:1, blackjack pays the set payout, a push returns the bet, and a loss takes it. Chips are saved, and results stay on screen for 2 s.
 7. **Next round:** reshuffle if 75% of the shoe has been dealt, seat any waiting players, then go back to step 1.
 
 ## Client/server message protocol
