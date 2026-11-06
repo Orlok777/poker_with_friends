@@ -116,10 +116,11 @@ export function chipColor(amount: number): string {
 }
 
 /** A chip disc with the amount next to it. */
-export function betChip(amount: number, opts: { doubled?: boolean; pending?: boolean } = {}): HTMLElement {
+export function betChip(amount: number, opts: { doubled?: boolean; pending?: boolean; allIn?: boolean } = {}): HTMLElement {
   const box = h('span', opts.pending ? 'bet-chip pending' : 'bet-chip');
   box.append(h('span', `chip-disc ${chipColor(amount)}`), h('span', 'bet-amount num', fmt(amount)));
   if (opts.doubled) box.append(h('span', 'bet-x', '×2'));
+  if (opts.allIn) box.append(h('span', 'bet-allin', 'ALL IN'));
   return box;
 }
 

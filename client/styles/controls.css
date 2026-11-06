@@ -155,6 +155,14 @@
   color: var(--text-muted);
 }
 
+.allin-btn.armed {
+  color: var(--accent-ink);
+  font-weight: 800;
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 .confirm-btn,
 .bet-reset {
   margin-left: auto;
@@ -171,6 +179,7 @@
 
 .bet-panel.out-of-chips .chip-row,
 .bet-panel.out-of-chips .bet-tool,
+.bet-panel.out-of-chips .allin-btn,
 .bet-panel.out-of-chips .confirm-btn,
 .bet-panel.out-of-chips .bet-ring-slot {
   display: none;
@@ -290,6 +299,16 @@
 
   .bet-tool {
     padding: 0 12px;
+  }
+
+  .bet-actions {
+    flex-wrap: wrap;
+  }
+
+  /* The confirm question is long, so it gets a row of its own. */
+  .allin-btn.armed {
+    order: -1;
+    flex: 1 0 100%;
   }
 
   .bet-tool .tool-label {

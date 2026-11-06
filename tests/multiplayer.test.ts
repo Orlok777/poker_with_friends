@@ -537,3 +537,31 @@ describe('bet limits', () => {
     expect(bob.me().chips).toBe(990);
   });
 });
+
+describe('all in', () => {
+  it('flags a bet of the whole stack, logs it, and does not flag a smaller bet', async () => {
+    const rigged = cards('10 10 10 9 6 7');
+    const { alex, bob } = await twoPlayers({ rigged, timing: { bettingMs: 5000, turnMs: 5000 } });
+    alex.send({ type: 'start_game' });
+    await bob.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
+    alex.send({ type: 'place_bet', amount: 1000 }); // the whole stack
+    bob.send({ type: 'place_bet', amount: 999 });
+    const st = await alex.waitForState((s) => alex.me(s).bet === 1000 && bob.me(s).bet === 999);
+    expect(alex.me(st).allIn).toBe(true);
+    expect(alex.me(st).chips).toBe(0);
+    expect(bob.me(st).allIn).toBe(false);
+    expect(st.log.some((e) => e.text === 'Alex goes all in (1,000)')).toBe(true);
+    expect(st.log.some((e) => e.text === 'Bob bets 999')).toBe(true);
+  });
+
+  it('refuses a bet above the stack, and a bet below the minimum', async () => {
+    const { alex, bob } = await twoPlayers({ timing: { bettingMs: 5000 } });
+    alex.send({ type: 'update_settings', settings: { minBet: 100 } });
+    await alex.waitForState((s) => s.settings.minBet === 100);
+    alex.send({ type: 'start_game' });
+    await bob.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
+    expect((await bob.expectError({ type: 'place_bet', amount: 1001 })).code).toBe('insufficient_chips');
+    expect((await bob.expectError({ type: 'place_bet', amount: 99 })).code).toBe('bet_invalid');
+    expect(bob.me().chips).toBe(1000);
+  });
+});

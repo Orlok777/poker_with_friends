@@ -495,6 +495,16 @@
   color: var(--accent);
 }
 
+.bet-allin {
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: var(--r-xs);
+}
+
 .chip-disc {
   width: 26px;
   height: 26px;

@@ -91,6 +91,7 @@ interface Player {
   cards: Card[];
   status: HandStatus;
   doubled: boolean;
+  allIn: boolean;
   inRound: boolean;
   outcome: Outcome | null;
   delta: number | null;
@@ -291,6 +292,7 @@ export class Table {
       cards: [],
       status: 'none',
       doubled: false,
+      allIn: false,
       inRound: false,
       outcome: null,
       delta: null,
@@ -444,6 +446,7 @@ export class Table {
     p.cards = [];
     p.status = 'none';
     p.doubled = false;
+    p.allIn = false;
     p.inRound = false;
     p.outcome = null;
     p.delta = null;
@@ -520,9 +523,11 @@ export class Table {
       return this.sendError(conn, 'bet_invalid', `The minimum bet is ${minBet}`);
     }
     if (amount > p.chips) return this.sendError(conn, 'insufficient_chips', 'You do not have enough chips');
+    const allIn = amount === p.chips;
     p.chips -= amount;
     p.bet = amount;
-    this.addLog(`${p.name} bets ${amount}`);
+    p.allIn = allIn;
+    this.addLog(allIn ? `${p.name} goes all in (${amount.toLocaleString('en-US')})` : `${p.name} bets ${amount}`);
     this.broadcast();
     this.checkBettingDone();
   }
@@ -835,6 +840,7 @@ export class Table {
       soft,
       status: p.status,
       doubled: p.doubled,
+      allIn: p.allIn,
       canDouble:
         this.phase === 'player_turns' &&
         this.turn === p.id &&

@@ -53,6 +53,44 @@ function confirmBet(): void {
   renderControls();
 }
 
+// ------------------------------------------------------------------ all in
+
+/** How long the "Confirm all in?" question waits for a second click. */
+const ALL_IN_CONFIRM_MS = 3000;
+
+let allInArmed = false;
+let allInTimer: number | null = null;
+
+function disarmAllIn(): void {
+  if (allInTimer !== null) window.clearTimeout(allInTimer);
+  allInTimer = null;
+  if (!allInArmed) return;
+  allInArmed = false;
+  renderControls();
+}
+
+function onAllInClick(): void {
+  const btn = $<HTMLButtonElement>('allin-btn');
+  const self = me();
+  if (btn.disabled || actionBusy || !self) return;
+  if (!allInArmed) {
+    allInArmed = true;
+    allInTimer = window.setTimeout(disarmAllIn, ALL_IN_CONFIRM_MS);
+    renderControls();
+    return;
+  }
+  // Second click: the whole stack becomes the bet and is confirmed.
+  if (allInTimer !== null) window.clearTimeout(allInTimer);
+  allInTimer = null;
+  allInArmed = false;
+  actionBusy = true;
+  pendingBet = self.chips;
+  playChip();
+  setBetSource($('pending-bet'));
+  send({ type: 'place_bet', amount: self.chips });
+  renderControls();
+}
+
 const ACTION_BUTTONS: Record<ActionName, string> = { hit: 'hit-btn', stand: 'stand-btn', double: 'double-btn' };
 
 function act(action: ActionName): void {
@@ -73,9 +111,11 @@ function flash(id: string): void {
 }
 
 function onKey(ev: KeyboardEvent): void {
+  const target = ev.target as HTMLElement | null;
+  // Pressing any other key cancels a pending all in. Enter/Space on the button itself is its own click.
+  if (allInArmed && !target?.closest('#allin-btn')) disarmAllIn();
   if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
   if ($('screen-table').hidden) return;
-  const target = ev.target as HTMLElement | null;
   if (target && (target.closest('input, textarea, select, [contenteditable="true"]') !== null)) return;
   // Leave Enter and Space alone on buttons outside the controls (log, rules, leave...).
   const onOtherButton = target?.closest('button') && !target.closest('.table-controls');
@@ -116,6 +156,15 @@ export function initControls(): void {
   $('repeat-bet').addEventListener('click', (ev) => setPending(lastBet, ev.currentTarget as Element));
   $('double-bet').addEventListener('click', (ev) => setPending(pendingBet * 2, ev.currentTarget as Element));
   $('confirm-bet').addEventListener('click', confirmBet);
+  $('allin-btn').addEventListener('click', onAllInClick);
+  // Clicking anything else cancels the all-in question (capture, so it runs before that click's own handler).
+  document.addEventListener(
+    'pointerdown',
+    (ev) => {
+      if (allInArmed && !(ev.target as HTMLElement | null)?.closest('#allin-btn')) disarmAllIn();
+    },
+    true,
+  );
   $('reset-btn-table').addEventListener('click', resetChips);
   for (const action of Object.keys(ACTION_BUTTONS) as ActionName[]) {
     $(ACTION_BUTTONS[action]).addEventListener('click', () => act(action));
@@ -135,6 +184,19 @@ export function renderControls(): void {
   if (!canBet) pendingBet = 0;
   const cap = betCap();
   const busy = actionBusy;
+
+  // ---- all in: the button is enabled with at least the minimum bet; armed shows the confirm question
+  const allInBtn = $<HTMLButtonElement>('allin-btn');
+  const allInOk = canBet && !busy && self.chips >= s.settings.minBet;
+  if (!allInOk && allInArmed) {
+    allInArmed = false;
+    if (allInTimer !== null) window.clearTimeout(allInTimer);
+    allInTimer = null;
+  }
+  allInBtn.disabled = !allInOk;
+  allInBtn.classList.toggle('armed', allInArmed);
+  $('allin-label').textContent = allInArmed ? `Confirm all in (${fmt(self.chips)})?` : 'All in';
+  allInBtn.title = allInArmed ? 'Click again to bet everything' : 'Bet all your chips';
 
   // ---- betting
   const betBar = $('bet-bar');

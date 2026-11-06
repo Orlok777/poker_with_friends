@@ -132,6 +132,8 @@ export interface PlayerView {
   soft: boolean;
   status: HandStatus;
   doubled: boolean;
+  /** True when the bet was the player's whole stack. */
+  allIn: boolean;
   /** True only for the player whose turn it is and who may double right now. */
   canDouble: boolean;
   /** Set once the round is settled; cleared when the next round starts. */

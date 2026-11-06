@@ -107,7 +107,7 @@ function betSpot(s: TableState, p: PlayerView, pending: number): HTMLElement {
     return spot;
   }
   if (p.bet > 0) {
-    const chip = betChip(p.bet, { doubled: p.doubled });
+    const chip = betChip(p.bet, { doubled: p.doubled, allIn: p.allIn });
     spot.append(chip);
     const key = `${s.round}:${p.id}:${p.bet}`;
     if (!seenBets.has(key)) {
