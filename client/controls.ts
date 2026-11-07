@@ -11,8 +11,10 @@ import { betOf, setBetSource, updatePendingBet } from './table.js';
 const CHIP_VALUES = [10, 25, 100, 500];
 
 let pendingBet = 0;
-/** The last bet this player confirmed, for Repeat. */
+/** The last bet this player confirmed: Repeat uses it, and each new round starts with it already in the bet box. */
 let lastBet = 0;
+/** The round whose bet box was already filled with the last bet, so Clear is not undone by the next update. */
+let prefilledRound = -1;
 let actionBusy = false;
 
 export function getPendingBet(): number {
@@ -86,6 +88,7 @@ function onAllInClick(): void {
   allInArmed = false;
   actionBusy = true;
   pendingBet = self.chips;
+  lastBet = self.chips;
   playAllIn();
   setBetSource($('pending-bet'));
   send({ type: 'place_bet', amount: self.chips });
@@ -161,6 +164,7 @@ export function initControls(): void {
   $('bet-ring-slot').append(ringEl('bet-ring'));
   $('clear-bet').addEventListener('click', () => setPending(0));
   $('repeat-bet').addEventListener('click', (ev) => setPending(lastBet, ev.currentTarget as Element));
+  $('half-bet').addEventListener('click', (ev) => setPending(Math.floor(pendingBet / 2), ev.currentTarget as Element));
   $('double-bet').addEventListener('click', (ev) => setPending(pendingBet * 2, ev.currentTarget as Element));
   $('confirm-bet').addEventListener('click', confirmBet);
   $('allin-btn').addEventListener('click', onAllInClick);
@@ -191,6 +195,12 @@ export function renderControls(): void {
   const canBet = s.phase === 'betting' && seated && myBet === 0 && !outOfChips && s.deadline !== null;
   if (!canBet) pendingBet = 0;
   const cap = betCap();
+  // A new betting round starts with the last bet already in the box, ready to confirm.
+  if (canBet && prefilledRound !== s.round) {
+    prefilledRound = s.round;
+    const again = Math.min(lastBet, cap);
+    if (pendingBet === 0 && again >= s.settings.minBet) pendingBet = again;
+  }
   const busy = actionBusy;
 
   // ---- all in: the button is enabled with at least the minimum bet; armed shows the confirm question
@@ -220,6 +230,7 @@ export function renderControls(): void {
   const repeat = $<HTMLButtonElement>('repeat-bet');
   repeat.disabled = !canBet || busy || repeatTo < s.settings.minBet || repeatTo === pendingBet;
   $('repeat-amount').textContent = lastBet > 0 ? fmt(repeatTo) : '';
+  $<HTMLButtonElement>('half-bet').disabled = !canBet || busy || pendingBet < 2;
   $<HTMLButtonElement>('double-bet').disabled = !canBet || busy || pendingBet === 0 || pendingBet >= cap;
   $<HTMLButtonElement>('confirm-bet').disabled = !canBet || busy || pendingBet < s.settings.minBet;
   const borrow = $<HTMLButtonElement>('borrow-btn');
