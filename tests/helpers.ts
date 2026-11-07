@@ -4,31 +4,25 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
-import type { ActionName, Card, ClientMsg, HandView, PlayerView, Rank, ServerMsg, Suit, TableState } from '../shared/types.js';
+import type { ActionKind, ClientMsg, HandResult, LegalView, PlayerView, ServerMsg, TableState } from '../shared/types.js';
 import { startServer, type RunningServer, type ServerOptions } from '../server/index.js';
 import type { Timing } from '../server/table.js';
 
+export { cards, show } from './cards.js';
+
 export type ErrorMsg = Extract<ServerMsg, { type: 'error' }>;
+export type HandResultMsg = Extract<ServerMsg, { type: 'hand_result' }>;
 
 export const FAST: Partial<Timing> = {
   dealMs: 5,
-  dealerStepMs: 5,
-  settleMs: 60,
+  streetMs: 5,
+  runoutMs: 5,
+  potMs: 5,
+  showdownMs: 60,
+  foldWinMs: 60,
   holdMs: 400,
-  bettingMs: 1500,
   turnMs: 1500,
 };
-
-/** Parses "10 7D AS" into cards. A bare rank is a spade. */
-export function cards(text: string): Card[] {
-  return text.split(/\s+/).filter(Boolean).map((token) => {
-    const last = token.slice(-1);
-    const hasSuit = 'SHDC'.includes(last) && token.length > 1;
-    const suit = (hasSuit ? last : 'S') as Suit;
-    const rank = (hasSuit ? token.slice(0, -1) : token) as Rank;
-    return { rank, suit };
-  });
-}
 
 export async function waitUntil(check: () => boolean, timeout = 4000, what = 'condition'): Promise<void> {
   const start = Date.now();
@@ -38,10 +32,12 @@ export async function waitUntil(check: () => boolean, timeout = 4000, what = 'co
   }
 }
 
-/** The bet a player has placed for the coming round (0 when none). */
-export const betOf = (p: PlayerView): number => p.hands[0]?.bet ?? 0;
-
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+export type Policy = (legal: LegalView, s: TableState) => { action: ActionKind; amount?: number };
+
+/** Checks when it can, otherwise calls. */
+export const passive: Policy = (l) => ({ action: l.canCheck ? 'check' : 'call' });
 
 export class TestClient {
   ws!: WebSocket;
@@ -101,7 +97,7 @@ export class TestClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         off();
-        reject(new Error(`Timed out waiting for a table state (last: phase ${this.state?.phase}, round ${this.state?.round})`));
+        reject(new Error(`Timed out waiting for a table state (last: phase ${this.state?.phase}, hand ${this.state?.hand})`));
       }, timeout);
       const off = this.onState((s) => {
         if (pred(s)) {
@@ -111,6 +107,11 @@ export class TestClient {
         }
       });
     });
+  }
+
+  /** Waits until it is this player's turn and returns that state. */
+  waitForTurn(timeout = 4000): Promise<TableState> {
+    return this.waitForState((s) => s.turn === this.id && s.you?.legal !== null && s.you?.legal !== undefined, timeout);
   }
 
   private waitMsgSince(index: number, pred: (m: ServerMsg) => boolean, timeout = 3000): Promise<ServerMsg> {
@@ -160,43 +161,45 @@ export class TestClient {
     return p;
   }
 
-  /** Plays by itself: bets when asked and picks an action with `policy` for the hand being played. */
-  autoPlay(bet: number, policy: (hand: HandView, p: PlayerView, s: TableState) => ActionName): () => void {
+  /** Plays by itself: whenever it is this player's turn, `policy` picks the action. */
+  autoPlay(policy: Policy): () => void {
     const done = new Set<string>();
-    return this.onState((s) => {
-      const p = s.players.find((x) => x.id === this.id);
-      if (!p || this.closed) return;
-      if (s.phase === 'betting' && s.deadline !== null && p.seat !== null && betOf(p) === 0 && p.chips >= s.settings.minBet) {
-        const key = `bet:${s.round}`;
-        if (!done.has(key)) {
-          done.add(key);
-          this.send({ type: 'place_bet', amount: Math.min(bet, p.chips) });
-        }
-      }
-      if (s.phase === 'player_turns' && s.turn === this.id) {
-        const hand = p.hands[p.activeHand];
-        if (!hand) return;
-        const key = `act:${s.round}:${p.activeHand}:${hand.cards.length}`;
-        if (!done.has(key)) {
-          done.add(key);
-          this.send({ type: 'action', action: policy(hand, p, s) });
-        }
-      }
-    });
+    const handle = (s: TableState) => {
+      if (this.closed || s.turn !== this.id || !s.you?.legal) return;
+      // A player never gets the turn twice with the betting exactly the same, so this sends one action per turn.
+      const chipsIn = s.pots.reduce((sum, p) => sum + p.amount, 0) + s.players.reduce((sum, p) => sum + p.bet, 0);
+      const key = `${s.hand}:${s.phase}:${chipsIn}:${s.players.filter((p) => p.folded).length}`;
+      if (done.has(key)) return;
+      done.add(key);
+      this.send({ type: 'action', ...policy(s.you.legal, s) });
+    };
+    const off = this.onState(handle);
+    if (this.state) handle(this.state); // it may already be this player's turn
+    return off;
   }
 
-  /** Remembers the settle-phase table state of every round. */
-  collectSettles(): Map<number, TableState> {
-    const settles = new Map<number, TableState>();
+  /** Every hand_result message received so far. */
+  results(): HandResultMsg[] {
+    return this.all.filter((m): m is HandResultMsg => m.type === 'hand_result');
+  }
+
+  /** Remembers the first `hand_over` table state of every hand. */
+  collectHandOvers(): Map<number, TableState> {
+    const seen = new Map<number, TableState>();
     this.onState((s) => {
-      if (s.phase === 'settle') settles.set(s.round, s);
+      if (s.phase === 'hand_over' && !seen.has(s.hand)) seen.set(s.hand, s);
     });
-    return settles;
+    return seen;
   }
 
   close(): void {
     this.ws.terminate();
   }
+}
+
+/** Net chips for a player in a hand result (0 when not in the hand). */
+export function netOf(r: HandResult, id: string): number {
+  return r.players.find((p) => p.playerId === id)?.net ?? 0;
 }
 
 // ------------------------------------------------------------------- server
@@ -218,7 +221,7 @@ export function createHarness(): Harness {
     dirs: [],
     logs: [],
     async boot(options = {}, dataDir) {
-      const dir = dataDir ?? mkdtempSync(join(tmpdir(), 'bj-test-'));
+      const dir = dataDir ?? mkdtempSync(join(tmpdir(), 'poker-test-'));
       if (!dataDir) h.dirs.push(dir);
       const srv = await startServer({
         port: 0,

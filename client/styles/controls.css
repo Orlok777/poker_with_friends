@@ -1,4 +1,4 @@
-/* Betting panel and action buttons under the felt. */
+/* The action bar under the felt: amount box, slider and presets, then Fold, Check or Call, and Bet or Raise. */
 
 .table-controls {
   display: grid;
@@ -12,23 +12,19 @@
 }
 
 .watch-note {
+  margin: 0;
   font-size: var(--fs-sm);
   color: var(--text-muted);
   text-align: center;
 }
 
-/* ----------------------------------------------------------------- betting */
+/* ----------------------------------------------------------------- actions */
 
-.bet-panel {
-  width: min(780px, 100%);
+.action-bar {
+  width: min(860px, 100%);
   display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-areas:
-    'head chips'
-    'actions actions';
-  align-items: center;
-  gap: 14px 24px;
-  padding: 14px 16px;
+  gap: 10px;
+  padding: 12px 14px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -36,115 +32,69 @@
   animation: rise-in var(--t-fade) var(--ease);
 }
 
-.bet-head {
-  grid-area: head;
+.sizing {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
 }
 
-.bet-total {
-  display: grid;
-}
-
-.bet-caption {
-  font-size: var(--fs-xs);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.bet-limits {
-  margin-left: 6px;
-  font-weight: 500;
-  letter-spacing: 0;
-  color: var(--text-faint);
-}
-
-.bet-big {
-  min-width: 3.2ch;
-  font-size: var(--fs-xxl);
-  font-weight: 800;
-  line-height: 1.05;
-  letter-spacing: -0.02em;
-}
-
-.chip-row {
-  grid-area: chips;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 12px;
-}
-
-.chip-btn {
-  position: relative;
-  width: 60px;
-  height: 60px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: var(--disc);
-  box-shadow:
-    0 3px 0 rgba(0, 0, 0, 0.35),
-    0 6px 14px rgba(0, 0, 0, 0.3);
-}
-
-.chip-btn::before {
-  content: '';
-  position: absolute;
-  inset: 4px;
-  border-radius: 50%;
-  border: 4px dashed rgba(255, 255, 255, 0.85);
-}
-
-.chip-face {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: var(--disc);
-  font-size: 14px;
-  font-weight: 800;
-  color: #fff;
-}
-
-@media (hover: hover) {
-  .chip-btn:hover:not(:disabled) {
-    background: var(--disc);
-    transform: translateY(-2px);
-    filter: brightness(1.12);
-  }
-}
-
-.chip-btn:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
-}
-
-.chip-btn:disabled {
-  opacity: 0.32;
-}
-
-.bet-actions {
-  grid-area: actions;
+.amount-field {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.bet-tool {
-  height: 44px;
-  padding: 0 14px;
+.amount-caption {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
-.bet-tool .x2 {
-  font-size: 16px;
-  font-weight: 800;
+.amount-input {
+  width: 112px;
+  height: 40px;
+  padding: 0 10px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--field);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+}
+
+.amount-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.amount-input:disabled {
+  opacity: 0.4;
+}
+
+.amount-slider {
+  flex: 1;
+  min-width: 80px;
+  accent-color: var(--accent);
+  height: 28px;
+}
+
+.amount-slider:disabled {
+  opacity: 0.35;
+}
+
+.presets {
+  display: flex;
+  gap: 6px;
+}
+
+.preset {
+  height: 36px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .allin-btn.armed {
@@ -155,47 +105,17 @@
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.confirm-btn,
-.bet-reset {
-  margin-left: auto;
-  height: 52px;
-  min-width: 210px;
-  padding: 0 22px;
-  font-size: 17px;
-}
-
-.confirm-btn kbd {
-  margin-left: 4px;
-  background: rgba(0, 0, 0, 0.12);
-}
-
-.bet-panel.out-of-chips .chip-row,
-.bet-panel.out-of-chips .bet-tool,
-.bet-panel.out-of-chips .allin-btn,
-.bet-panel.out-of-chips .confirm-btn,
-.bet-panel.out-of-chips .bet-ring-slot {
-  display: none;
-}
-
-.bet-panel.out-of-chips {
-  grid-template-areas: 'head actions';
-}
-
-/* ----------------------------------------------------------------- actions */
-
-.action-bar {
-  width: min(720px, 100%);
+.act-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
-  animation: rise-in var(--t-fade) var(--ease);
 }
 
 .action-btn {
   --c: var(--hit);
-  height: 68px;
+  height: 60px;
   gap: 10px;
-  font-size: 19px;
+  font-size: 18px;
   font-weight: 700;
   color: #fff;
   background: color-mix(in srgb, var(--c) 16%, var(--surface-2));
@@ -205,8 +125,8 @@
 }
 
 .action-btn svg.icon {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   color: var(--c);
 }
 
@@ -214,16 +134,16 @@
   margin-left: 2px;
 }
 
-.act-stand {
+.act-fold {
   --c: var(--stand);
 }
 
-.act-double {
+.act-call {
   --c: var(--double);
 }
 
-.act-split {
-  --c: #a78bfa;
+.act-raise {
+  --c: var(--accent);
 }
 
 /* On my turn the enabled buttons light up. */
@@ -258,87 +178,65 @@
 
 /* ------------------------------------------------------------------ phones */
 
+@media (max-width: 860px) {
+  .sizing {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+
+  .presets {
+    flex: 1 0 100%;
+  }
+
+  .preset {
+    flex: 1;
+    padding: 0 4px;
+  }
+
+  /* The confirm question is long, so it gets the whole row. */
+  .allin-btn.armed {
+    flex: 3;
+  }
+}
+
 @media (max-width: 700px) {
   .table-controls {
     padding-top: 10px;
     gap: 8px;
   }
 
-  .bet-panel {
-    grid-template-columns: 1fr;
-    grid-template-areas: 'head' 'chips' 'actions';
-    gap: 10px;
-    padding: 12px;
-  }
-
-  .bet-head {
-    justify-content: space-between;
-  }
-
-  .bet-big {
-    font-size: 30px;
-  }
-
-  .bet-ring-slot .ring {
-    width: 36px;
-    height: 36px;
-  }
-
-  .chip-row {
-    justify-content: space-between;
-  }
-
-  .chip-btn {
-    width: 58px;
-    height: 58px;
-  }
-
-  .bet-tool {
-    padding: 0 12px;
-  }
-
-  .bet-actions {
-    flex-wrap: wrap;
-  }
-
-  /* The confirm question is long, so it gets a row of its own. */
-  .allin-btn.armed {
-    order: -1;
-    flex: 1 0 100%;
-  }
-
-  /* Basis makes Confirm wrap onto its own row when the tool buttons leave too little room. */
-  .confirm-btn,
-  .bet-reset {
-    flex: 1 1 160px;
-    min-width: 0;
-    height: 48px;
-    padding: 0 14px;
-  }
-
-  .bet-panel.out-of-chips {
-    grid-template-areas: 'head' 'actions';
-  }
-
   .action-bar {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .amount-caption {
+    display: none;
+  }
+
+  .amount-input {
+    width: 96px;
+  }
+
+  .act-row {
     gap: 6px;
   }
 
-  /* Four buttons share the width, and a phone has no keyboard for the shortcuts. */
+  /* A phone has no keyboard for the shortcuts. */
   .action-btn kbd {
     display: none;
   }
 
   .action-btn {
-    height: 60px;
-    gap: 8px;
-    padding: 0 8px;
-    font-size: 17px;
+    height: 54px;
+    gap: 6px;
+    padding: 0 6px;
+    font-size: 16px;
     border-radius: 12px;
   }
 
   .action-btn svg.icon {
-    width: 22px;
-    height: 22px;
+    width: 18px;
+    height: 18px;
   }
 }

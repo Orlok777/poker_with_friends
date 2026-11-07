@@ -1,327 +1,284 @@
-# Multiplayer Blackjack — Build Spec v1
+# Multiplayer Poker — Build Spec v1
 
-Nov 6, 2026 · @cocobanana67
+Nov 7, 2026 · @cocobanana67
 
 ## Goal and scope
 
-A multiplayer blackjack game for a group of friends, played for fake chips. One friend hosts the server on their Windows PC, and the others join from a browser at the host's IP and port.
+A multiplayer No-Limit Texas Hold'em game for a group of friends, played for fake chips. One friend hosts the server on their Windows PC, and the others join from a browser at the host's IP and port.
 
-- The server runs exactly one table: a dealer controlled by the server and up to 6 players. There are no lobbies and no lobby codes.
-- The host picks the table rules before the first round. They are locked once the game starts.
+This project starts as a copy of **Blackjack with Friends**, which already works. Keep everything that isn't blackjack: the stack, file layout, host token, join screen, waiting room, settings panel, reconnect, kicking, chip store, borrowing, debt, earnings, pay back, reset chips, Share button, sounds, theme, card drawing, phone layout, `HOSTING.md` and the screenshot script. Replace only the game: the rules engine, the round flow, the table screen and the action controls.
+
+- The server runs exactly one table: 2 to 9 players and no computer opponent. The server deals the cards; a dealer button moves around the table. There are no lobbies and no lobby codes.
+- The host picks the table settings before the first hand. They are locked once the game starts.
 - Players join from a desktop or phone browser. The layout is built for desktop and must stay usable on a phone.
 - No accounts and no per-player passwords. Chips are saved per username in a JSON file on the host's PC.
 - No real money.
-- The project has two phases. **Phase 1** is the browser version and is the one to build now. **Phase 2** wraps it in an Electron desktop app; it is described near the end and gets its own prompt later.
+- The project has two phases. **Phase 1** is the browser version and is the one to build now. **Phase 2** wraps it in an Electron desktop app, the same way as the blackjack project, and gets its own prompt later.
 
 ## Tech stack and project layout
 
-The stack is Node.js with TypeScript on both ends. One process serves the web page and the WebSocket, and you start it with a single command.
-
-- **Runtime:** Node.js 20 or newer, TypeScript everywhere.
-- **Server:** Express for static files plus `ws` or Socket.IO for real-time messages. Pick one and say why in the plan.
-- **Client:** plain HTML, CSS and TypeScript, built with Vite or no bundler. Pick one in the plan. No frontend framework.
-- **Cards:** drawn in CSS or SVG in code, with no image files.
-- **Sounds:** short `.mp3` effects from the CC0 Kenney Casino Audio pack, played with the Web Audio API (see `CREDITS.md`). Only the win and lose jingles are generated in code.
-- **Tests:** Vitest.
-- **Start:** `npm install && npm start` builds the client and starts the server on port 3000.
+Same stack as the blackjack project: Node.js 20+, TypeScript everywhere, Express plus `ws`, Vite for the client, no frontend framework, Vitest for tests. `npm install && npm start` builds the client and starts the server on **port 3000**. The `PORT` environment variable still overrides it.
 
 ```
 /shared   types.ts      message and table-state types used by both sides
-/server   index.ts      HTTP + WebSocket entry point, host token, startup URLs
-          table.ts      the one table: players, seats, settings, timers
-          game.ts       pure rules engine, no networking
-          deck.ts       shoe, shuffle, seedable random generator
-          store.ts      chips saved per username in data/players.json
-/client   index.html, main.ts, styles.css, sound.ts, public/sounds/*.mp3
-/tests    game.test.ts, multiplayer.test.ts
+/server   index.ts      HTTP + WebSocket entry point, host token, startup URLs (unchanged apart from names)
+          table.ts      the one table: players, seats, button, settings, timers, betting rounds
+          game.ts       pure betting engine: blinds, actions, min raise, side pots, no networking
+          hand.ts       pure hand evaluator: best 5 of 7, ranking, hand names
+          deck.ts       one 52-card deck per hand, shuffle, seedable random generator
+          store.ts      chips saved per username in data/players.json (unchanged)
+/client   index.html, main.ts, table.ts, controls.ts, cards.ts, sound.ts, styles/*, public/sounds/*.mp3
+/tests    hand.test.ts, game.test.ts, multiplayer.test.ts, store.test.ts
 /data     players.json  created on first run, ignored by git
 ```
 
-- Keep `game.ts` free of networking code so it can be tested on its own. Use a seedable random generator so tests can deal known cards.
-- Export a `startServer({ port, dataDir })` function from the server, and have `npm start` call it. Phase 2 will reuse it to run the server inside Electron.
+- Keep `game.ts` and `hand.ts` free of networking code so they can be tested on their own. Use a seedable random generator so tests can deal known cards. In normal play, seed it from `crypto.randomBytes` for every hand.
+- Keep `startServer({ port, dataDir })` exported for Phase 2.
+- No new dependencies. Write the hand evaluator yourself; scoring all 21 five-card combinations of 7 cards is fast enough.
+- Rename the project everywhere it says blackjack: `package.json` name and description, page title, join screen, `HOSTING.md`, `CREDITS.md` and the startup log.
 
 ## Game rules
 
-V1 uses standard casino rules with one split, and no insurance, surrender or side bets. The host can change some rules before the first round.
+V1 is No-Limit Texas Hold'em cash game play with blinds and no antes.
 
 | Rule | Value | Host can change |
 | --- | --- | --- |
-| Decks in the shoe | 5 | Yes, 1 to 8 |
-| Reshuffle | When 75% of the shoe is dealt | No |
-| Dealer on soft 17 | Stands | Yes: stands or hits |
-| Blackjack payout | 3:2 | Yes: 3:2 or 6:5 |
-| Dealer hole card | Dealer peeks for blackjack when showing an ace or a 10-value card | No |
-| Double down | On any first two cards: the bet doubles and the player gets exactly one more card | Yes: any two cards, 9 to 11 only, or off |
-| Split | A pair can be split once for a second bet equal to the first; see below | Yes: on or off, default on |
-| Insurance, surrender, side bets | Not in v1 | No |
+| Variant | No-Limit Texas Hold'em | No |
+| Deck | One 52-card deck, freshly shuffled every hand | No |
+| Small blind / big blind | 5 / 10 | Yes |
+| Antes, straddles | Not in v1 | No |
+| Showdown | Every hand still in at showdown is shown automatically | No |
+| Odd chip in a split pot | Goes to the winner closest to the left of the button | No |
 
-Hand values:
+**A hand:**
 
-- Number cards count their number, face cards count 10, and an ace counts 11 unless that would bust the hand, in which case it counts 1.
-- A hand with an ace counted as 11 is soft, and the UI shows it as, for example, "soft 17".
-- Blackjack is an ace plus a 10-value card as the first two cards. It beats any other 21.
-- Player blackjack against dealer blackjack is a push, and the bet is returned.
-- A player who busts loses at once, even if the dealer busts later.
-- Doubling needs enough chips to match the original bet.
+1. The button moves one seat to the left, to the next player who is dealt in. On the first hand it goes to a random dealt-in player.
+2. The player left of the button posts the small blind, the next one the big blind. **Heads-up (2 players):** the button posts the small blind and acts first before the flop, and last after it.
+3. Each player gets two hole cards, one at a time, starting left of the button. Only the owner sees them.
+4. **Preflop** betting starts left of the big blind. Then the **flop** (3 board cards), **turn** (1) and **river** (1), each followed by a betting round that starts with the first player still in left of the button.
+5. If everyone but one player folds, that player wins the pot at once and their cards stay hidden.
+6. Otherwise, after the river betting round, the **showdown**: every remaining hand is revealed and each pot goes to the best hand among the players eligible for it.
 
-Split:
+**Betting (no limit):**
 
-- Allowed on the first two cards when both have the same value. Any two 10-value cards count, so K and 10 can be split.
-- It costs a second bet equal to the original, and is not allowed if the player doesn't have enough chips.
-- One split only: the new hands can't be split again.
-- Each new hand gets a second card straight away (left hand first, then right hand), and the hands are played in turn, left hand first. The turn timer restarts for each hand.
-- Double after split is allowed and follows the double-down setting, per hand.
-- Split aces get exactly one card each and stand automatically.
-- A 21 on a split hand is a normal 21, not a blackjack, so it pays 1:1.
-- Each hand is settled separately against the dealer.
+- Actions: fold, check (only when there is nothing to call), call, bet (when nobody has bet this round), raise, and all in.
+- The minimum bet is the big blind. The minimum raise is a raise **by** at least the size of the last full bet or raise in this round (preflop, the big blind counts as the first bet). The maximum is the player's whole stack.
+- A player with fewer chips than a call or minimum raise can still go all in for less.
+- An all-in raise that is smaller than a full raise does **not** reopen the betting for players who have already acted: they may only call or fold.
+- A betting round ends when every player still in has either matched the highest bet or is all in, and everyone has had a chance to act. The big blind gets the option to raise preflop when everyone just called.
+- **Uncalled bet:** if a bet or raise is not fully called, the uncalled part goes straight back to the player who made it before the pot is awarded.
+- **All in with no more betting possible:** when at most one player still in has chips behind, all remaining hands are turned face up and the rest of the board is dealt with a pause of about 1 s per street.
+- Amounts sent by clients for bet and raise are **"to" amounts**: the total the player will have in front of them this betting round, not the extra chips added.
+
+**Side pots:**
+
+- When players are all in for different amounts, the chips are split into a main pot and side pots. Each pot lists the players who can win it.
+- Folded players' chips stay in the pots they put them in, but folded players can't win anything.
+- Each pot is awarded on its own, smallest (main) pot first. A tie splits that pot evenly; the odd chip rule above handles leftovers.
+
+**Hand ranking, highest first:** straight flush, four of a kind, full house, flush, straight, three of a kind, two pair, one pair, high card.
+
+- The best five cards out of the seven (two hole cards plus five board cards) count, in any combination. The board can play.
+- Ace is high, and also low in the A-2-3-4-5 straight ("five high"). No wraparound straights such as Q-K-A-2-3.
+- Suits never break ties. Kickers do, up to five cards in total.
+- Hand names, used at the table and in the log: "High card, ace", "Pair of kings", "Two pair, aces and sevens", "Three sevens", "Straight, ten high", "Flush, ace high", "Full house, kings over sevens", "Four nines", "Straight flush, nine high", "Royal flush".
 
 ## Host, joining and settings
 
-The host is whoever runs the server. On startup the server creates a random host token, prints a host link such as `http://localhost:3000/?host=TOKEN`, and opens it in the default browser. Opening that link gives host controls. Everyone else who joins is a regular player.
+Exactly as in the blackjack project: host token and host link, join screen, waiting room with ready markers, settings locked on Start, joining a game in progress, kicking, the game ending when the last player leaves (with the "Create new game" button on the host link), and the host playing in their own seat.
 
-Use a token rather than "connections from localhost". Tunnel traffic also arrives from localhost, so that check would make every tunnel player a host.
+Differences:
 
-- **Join screen:** enter a username, plus the table password if the host set one, then Join.
-- **Waiting room:** before the first round, it lists the players and whether each is ready. The host sees an editable settings panel and a Start button, which is enabled once at least one player is ready. Everyone else sees the settings read-only.
-- **Settings:** locked once the host clicks Start, until the server restarts.
-- **Joining a game in progress:** the player goes straight to the table and takes a free seat from the next round. If every seat is full, they watch until one frees up.
-- **Kicking:** the host can kick any player. A kicked player sees a message and can't rejoin with that username until the server restarts.
-- **The game ends when the last player leaves** (or is dropped after not coming back). The table is wiped: settings go back to the defaults, and the round counter, shoe, log and kick list are cleared. Chips and debts stay saved per username. While the game is ended, `server_info` has `gameOpen: false`, the join screen says "This game has ended. Ask the host to create a new game.", and a join without the host token is refused with `game_closed`. Joining with the host link shows a "Create new game" button and starts a fresh game in the waiting room with that player as host. If the last player leaves in the middle of a hand, the game ends when the round is settled.
-- **The host's own seat:** the host plays like everyone else. If the host's tab closes, the game continues, and reopening the host link restores host controls.
-- **Ending the game:** stopping the server (Ctrl+C or closing its window) ends the game for everyone.
+- **Start** needs at least **2** ready players.
+- **Joining a game in progress:** the player takes a free seat and is dealt in from the next hand. If every seat is full, they watch until one frees up.
+- **Next hand:** a new hand starts by itself after the pause at the end of the previous one, as long as at least 2 seated players have chips and aren't sitting out. Otherwise the table shows "Waiting for players" and starts as soon as there are 2.
 
 | Setting | Default | Allowed range |
 | --- | --- | --- |
-| Max players | 6 | 1 to 7 |
+| Max players | 6 | 2 to 9 |
 | Table password | None | Optional, any text |
 | Starting chips | 1,000 | 100 to 100,000 |
-| Minimum bet | 10 | 1 up to the starting chips. There is no maximum bet: a player may bet any amount from the minimum up to their own chips |
-| Betting timer | 20 s; a player with no bet sits out the round | 10 to 60 s |
-| Turn timer | 30 s; the player stands automatically when it runs out | 10 to 120 s, or off |
-| Decks, dealer on soft 17, blackjack payout, double down, split allowed | As in Game rules | As in Game rules |
+| Small blind | 5 | 1 up to the big blind |
+| Big blind | 10 | The small blind up to starting chips ÷ 10 |
+| Turn timer | 30 s; when it runs out the player checks if they can, otherwise folds | 10 to 120 s, or off |
 
 ## Chips and usernames
 
-Chips belong to a username, are saved on the host's PC, and survive server restarts. There are no passwords, which is fine among friends: anyone who types a username gets its chips.
+The same as the blackjack project, with poker in place of blackjack. Chips are the player's whole stack: everything they have is on the table, and there is no separate buy-in.
 
-- **File:** `data/players.json` maps each username to its chip count, or to `{ "chips": n, "debt": n, "earnings": n }` when the player owes the bank or has earnings other than 0 (zero fields are left out). Usernames match ignoring case, and the display keeps the case first used.
-- **New username:** starts with the starting-chips setting. A returning username keeps its saved chips, even if the host changed starting chips.
-- **Saving:** after each round is settled and when a player leaves. Write to a temporary file and then rename it, so a crash never leaves a half-written file.
-- **Reset chips:** a button that sets that player's chips back to the starting amount and clears their debt, after a confirmation. It is available in the waiting room and in the betting phase before the player bets.
-- **Earnings:** each player has their own running profit or loss from the cards, positive or negative, saved with their chips. It goes up and down with every settled hand (a doubled or split hand counts its full bet). Borrowing and paying back do not change it. It is shown as "Earnings +250" (green) or "Earnings −1,000" (red) under the player's name, and in the waiting room list. Everyone's money is their own: nobody can change another player's chips, debt or earnings. Reset chips sets earnings back to 0 (along with the chips and the debt).
-- **Pay back:** a player who owes can pay the debt down with their own chips, as much as the chips allow (the smaller of chips and debt), in the waiting room or in the betting phase before they bet. It lowers chips and debt by the same amount, so earnings stay the same, and logs `<name> pays back 1,000 and owes nothing`. It is a Pay back button in the waiting room and a Pay back link next to "owes" at the table. The server refuses it with `cannot_pay_back` when nothing is owed, there are no chips, or it is the wrong time.
-- **Out of chips:** a player whose chips are below the minimum bet cannot bet and sits out until they borrow. At the start of each betting phase they get an in-page prompt (not a browser dialog) offering to borrow a buy-in. "Borrow" adds the starting-chips amount to their chips and to their debt, and logs `<name> borrows 1,000 and now owes 1,000`. "Not now" (or Esc, or a click outside) closes the prompt for that round; a Borrow chips button in the betting bar opens it again. Chips are never negative: what the player owes is the debt, shown in red as "owes 1,000" next to their chips (at the table and in the waiting room). The debt is saved with the player, can grow with every loan, and is not paid back automatically. Borrowing is refused unless betting is open and the player is seated, has not bet and has fewer chips than the minimum bet (`cannot_borrow`).
-- **Same username twice:** a username already at the table can't join again, unless it's the same player reconnecting with their token.
-- **Allowed usernames:** 1 to 16 characters made of letters, numbers, spaces, `-` and `_`.
+- **File, saving, new usernames, allowed usernames, same username twice:** unchanged. Save after each hand is settled and when a player leaves.
+- **Earnings:** go up and down with every settled hand, by what the player won from pots minus what they put in. Borrowing and paying back don't change them.
+- **Reset chips** and **Pay back:** allowed in the waiting room, or at the table while the player is not in the current hand (sitting out, waiting for a seat, or between hands). Refused with `cannot_reset` / `cannot_pay_back` otherwise.
+- **Out of chips:** a player with 0 chips sits out. When a hand ends with them at 0, they get the same in-page borrow prompt as in blackjack. "Borrow" adds the starting-chips amount to their chips and their debt and logs `<name> borrows 1,000 and now owes 1,000`. "Not now" closes it; a Borrow chips button next to their seat opens it again. Borrowing is refused unless the player is seated, has 0 chips and isn't in the current hand (`cannot_borrow`).
+- **Sit out:** a "Sit out next hand" toggle. A player sitting out isn't dealt in and pays no blinds until they turn it off. There are no missed-blind rules in v1. A player whose connection is lost sits out automatically until they come back.
 
-## Round flow and turn order
+## Phases and turn order
 
-Each round runs through seven phases in order and then starts again from betting. The server owns the current phase, and clients only display it.
+The server owns the current phase, and clients only display it.
 
-1. **Betting:** each seated player bets anything from the minimum bet up to their own chips before the betting timer ends. Anyone who doesn't bet sits out the round.
-2. **Deal:** one card face up to each player in seat order, then the dealer's up card, then a second card to each player, then the dealer's hole card face down. Cards are dealt about 300 ms apart.
-3. **Dealer peek:** if the up card is an ace or a 10-value card, the server checks for dealer blackjack. If the dealer has it, the hole card is revealed and the round skips to settle.
-4. **Player turns:** in seat order, left to right. Each player chooses Hit, Stand, Double or Split until they stand, bust or reach 21. Blackjack and 21 stand automatically. After a split, the player plays the left hand to the end and then the right hand.
-5. **Dealer turn:** reveal the hole card, then draw until 17 or more, following the soft-17 rule. If every player has busted, the dealer draws no cards.
-6. **Settle:** each hand is settled on its own: a win pays 1:1, blackjack pays the set payout, a push returns the bet, and a loss takes it. Chips are saved, and results stay on screen for 2 s (one named constant, `ROUND_PAUSE_MS`, in `server/table.ts`).
-7. **Next round:** reshuffle if 75% of the shoe has been dealt, seat any waiting players, then go back to step 1.
+| Phase | What happens |
+| --- | --- |
+| `waiting` | Waiting room before Start, or at the table while fewer than 2 players can play |
+| `preflop` | Button moves, blinds posted, hole cards dealt about 300 ms apart, then the first betting round |
+| `flop`, `turn`, `river` | Board cards dealt (about 600 ms pause first), then a betting round |
+| `showdown` | Remaining hands revealed, pots awarded one at a time, winning five cards highlighted |
+| `hand_over` | Results stay on screen, then the next hand starts |
+
+- Pause after a showdown: 4 s. Pause after a hand won without a showdown: 2 s. Both are named constants in `server/table.ts` (`SHOWDOWN_PAUSE_MS`, `FOLD_WIN_PAUSE_MS`).
+- Only one player acts at a time, in seat order, and the turn timer restarts for every action.
 
 ## Client/server message protocol
 
-The server is the only source of truth. Clients send what the player wants to do, and the server replies with the full table state after every change.
+The server is the only source of truth. Clients send what the player wants to do, and the server replies with the full table state after every change. Types are defined once in `/shared/types.ts`.
 
-Every message is JSON with a `type` field, and the types are defined once in `/shared/types.ts`.
+**The big change from blackjack:** `table_state` is no longer the same for everyone. It is built separately for each connection, so that each player gets only their own hole cards.
 
 **Client to server**
 
 | Type | Payload | Allowed when |
 | --- | --- | --- |
-| `join` | username, password, reconnect token (optional), host token (optional) | Join screen, or automatically after a refresh |
-| `leave` | none | Any time |
-| `set_ready` | ready (true or false) | Waiting room |
-| `update_settings` | settings | Host only, waiting room |
-| `start_game` | none | Host only, at least one player ready |
-| `place_bet` | amount | Betting phase |
-| `action` | hit, stand, double or split | That player's turn |
-| `reset_chips` | none | Waiting room, or betting phase before that player bets |
-| `borrow` | none | Betting phase, seated, no bet yet, chips below the minimum bet |
-| `pay_back` | none | Waiting room, or betting phase before that player bets; the player owes and has chips |
-| `kick_player` | playerId | Host only |
+| `join`, `leave`, `set_ready`, `update_settings`, `start_game`, `reset_chips`, `borrow`, `pay_back`, `kick_player` | As in blackjack | As in blackjack, with the poker timing rules above |
+| `action` | `fold`, `check`, `call`, `bet` + amount, `raise` + amount, or `all_in` | That player's turn |
+| `sit_out` | sittingOut (true or false) | Seated, any time; takes effect from the next hand |
 
 **Server to client**
 
 | Type | Payload | Sent when |
 | --- | --- | --- |
-| `server_info` | whether a password is set, whether seats are free, current phase, whether a game is open (`gameOpen`) | As soon as a client connects |
-| `joined` | playerId, reconnect token, isHost | After a join or reconnect |
-| `table_state` | phase, settings, hostId, players (name, chips, ready, connected, and one hand, or two after a split, each with cards, total, bet, status, doubled, all-in flag and result; plus which hand is active and whether split is allowed now), seats, dealer cards, whose turn, timer deadline, a counter of shoe reshuffles | After every change |
-| `round_result` | per hand (two entries for a player who split): win, loss, push or blackjack, plus chip change | End of each round |
-| `kicked` | reason | The player was kicked |
-| `error` | code, message | A rejected message |
+| `server_info`, `joined`, `kicked`, `error` | As in blackjack | As in blackjack |
+| `table_state` | phase, settings, hostId, hand number, button / small blind / big blind seats, board cards, pots (amount and eligible player ids), whose turn, timer deadline, server time, log; players (name, chips, debt, earnings, ready, connected, seat, sitting out, in hand, folded, all in, chips in front this round, last action, hole cards or hidden cards, hand name at showdown); and for the receiving player only a `you` block with their hole cards, current hand name and their legal actions right now (can check, call amount, min and max bet or raise "to" amounts) | After every change, one per connection |
+| `hand_result` | per pot: amount, winner ids, winning hand name and the five winning cards; per player: net chip change | End of each hand |
 
 Server rules:
 
-- Check every message for the right phase, the right player's turn, host rights, a bet of at least the minimum and no more than the player's chips, whether the action (including split) is allowed right now, and enough chips. A rejected message gets an `error` reply and changes nothing.
-- Never send the dealer's hole card to clients before it is revealed. Send it as a hidden card.
+- Check every message for the right phase, the right player's turn, host rights, and whether the action and amount are legal right now. A bet or raise must be a whole number between the minimum and the player's stack. A rejected message gets an `error` reply (`action_not_allowed`, `bad_amount`, `not_your_turn`, ...) and changes nothing.
+- **Never send another player's hole cards** before that hand is shown at showdown or in an all-in runout. Send them as two hidden cards.
+- **Never send the deck or any board card** before it is dealt.
 - Never send the host token to anyone. Clients only learn `isHost`.
-- Send the full `table_state` after every change rather than partial updates, because it is simpler and harder to get wrong.
+- Send the full `table_state` after every change rather than partial updates.
 - Timers run on the server. Clients get the deadline as a timestamp and count down locally.
 
 ## UI screens
 
-The game has three screens: join, waiting room and table. All of them are served by the host's server, so players only need a browser.
+The join and waiting-room screens stay as they are, with the poker settings in the panel. The table screen is rebuilt for poker in the same look.
 
-1. **Join:** game title, a username field, a password field shown only when the table has a password, and a Join button.
-2. **Waiting room:** the player list with ready markers, the settings panel (editable for the host, read-only for others), Ready, Reset chips and Leave buttons, and the host's Start button.
-3. **Table:**
-   - An oval green felt table, with the dealer at the top showing cards and hand total.
-   - Player seats in an arc along the bottom, with your own seat at the center. Each seat shows name, chips, bet, cards, total and a status such as BUST, BLACKJACK or WIN +100.
-   - The current player's seat is highlighted, with a countdown bar for the turn timer.
-   - Action bar with Hit, Stand, Double and Split (shortcuts H, S, D and P), greyed out when not allowed. Split is always shown.
-   - After a split, both hands sit side by side in the player's spot, each with its own total badge, bet chip and result. The hand being played is highlighted.
-   - Betting bar with the label "Min 10" (the minimum bet), chip buttons for 10, 25, 100 and 500, plus Clear, ½, ×2, All in and Confirm. A player who is out of chips sees Borrow chips instead of Confirm.
-   - **Last bet:** each new betting round starts with the player's last bet already in the bet box (limited to their chips, and only if it is at least the minimum bet). They still press Confirm, and can change it first: Clear empties the box (and it stays empty that round), ½ halves the amount (rounded down), and ×2 doubles it. An all in counts as the last bet too. This is client-side only; the server is unchanged.
-   - **All in:** the first click turns the button into a highlighted "Confirm all in (1,050)?" showing the player's full chips; a second click bets the whole stack and confirms it. It goes back to normal after 3 s without a second click, or when the player clicks anything else. It is enabled only when the player has at least the minimum bet. An all-in bet shows an "ALL IN" tag on its chip, and the log says "<name> goes all in (1,050)".
-   - A banner with the round results.
-   - An event log of recent actions, such as "Alex hits: 7, total 15".
-   - For the host only, a kick button on each other player's seat.
+**Table:**
 
-Cards are white rounded rectangles with the rank and suit in the corners, red for hearts and diamonds. Face-down cards show a patterned back, and cards slide in from a shoe on the table.
+- The same oval green felt and wooden rail. The center holds the five board-card slots and the pot. With side pots, each pot shows as its own chip stack with its amount ("Main 240", "Side 1 · 80").
+- Seats all the way around the oval (up to 9), with your own seat at bottom center. Each seat shows the name, chips, the last action ("Check", "Call 20", "Raise to 60", "All in"), two cards (face down for other players, face up for you) and the chips in front of them this round as a stack toward the center.
+- A white "D" dealer button next to the button seat, and small "SB" / "BB" tags on the blinds.
+- The current player's seat is highlighted with the countdown bar for the turn timer, as in blackjack. Folded players are dimmed and their cards are pulled away. Sitting-out players show "Sitting out".
+- Under your own cards, your current hand name ("Pair of sevens"), updated on every street.
+- **Action bar:** Fold (F), Check or Call 20 (C), and Bet or Raise to (R) with an amount box, a slider, and preset buttons Min, ½ pot, ¾ pot, Pot and All in. All in keeps the blackjack confirm step ("Confirm all in (1,050)?"). The amount box starts at the minimum raise and is limited to the legal range. Buttons are greyed out when it's not your turn or the action isn't allowed. Check is never shown when there is something to call.
+- **Showdown:** remaining hands flip face up, the winning five cards on the board and in the winner's hand are highlighted, and a banner says "Alex wins 240 with a flush, ace high" (or "Alex and Sam split 240 with a straight, ten high"). Pots slide to their winners one at a time.
+- The event log keeps its drawer, with entries such as "Alex raises to 60", "Flop: K♠ 7♦ 2♣", "Sam shows two pair, kings and sevens", "Alex wins 240".
+- Sit out toggle, Reset chips, Pay back and Borrow chips near your seat; for the host, a kick button on each other player's seat.
+- **Phones:** the table must still work on a 390 px-wide phone held upright. Other seats can shrink to name, chips and action; your cards and the action bar stay large.
 
-- **Theme:** classic casino green.
-- **Sounds:** recorded effects from the Kenney Casino Audio pack (CC0, `.mp3` so they play on iPhone Safari) for a card dealt (3 or 4 variants at random), the hole card flip, a reshuffle, a chip or bet placed, chips paid out on a win, and an all-in. The win and lose jingles are generated with the Web Audio API. Playback speed varies randomly between 0.95 and 1.05. A mute button remembers the choice in localStorage.
-- **Phones:** the table must still work on a 390 px-wide phone held upright. Seats can shrink or stack.
+**Sounds:** the same Kenney Casino Audio files. Card dealt and board card: `card-slide-*`. Showdown flip and fold: `card-place-1`. New hand: `card-shuffle`. Bet, call, raise: `chip-lay-*`. Pot pushed to the winner: `chips-handle-5`. All in: the layered all-in sound. Check: a short soft knock generated with Web Audio. Win and lose jingles as before, for your own hands only. Mute button unchanged.
 
 ## Hosting and connecting
 
-In Phase 1 the host runs `npm start` on their Windows PC, and players open `http://HOST_IP:3000` in a browser. The same server delivers the page and the WebSocket, so there is nothing else to set up.
-
-- The server listens on `0.0.0.0` so other machines can reach it. The port defaults to 3000, and the `PORT` environment variable overrides it.
-- On startup, the server prints the host link and every LAN address, for example `http://192.168.1.42:3000`, so the host can copy one to share.
-- The client opens its WebSocket to the same host and port it was loaded from. It uses `wss://` when the page was loaded over https, which tunnels need.
-
-| Option | When it works | Setup |
-| --- | --- | --- |
-| Same Wi-Fi or LAN | Everyone on the same network | Allow Node through Windows Firewall the first time it runs (private networks) |
-| Port forwarding | Over the internet | Forward TCP port 3000 on your router to your PC, and share your public IP |
-| Tailscale | Over the internet, no router changes | Everyone installs Tailscale and joins your network; players use your Tailscale IP |
-| Tunnel (cloudflared) | Over the internet, nothing for players to install | Run `cloudflared tunnel --url http://localhost:3000`; it prints a public https link to share |
-
-Write a short `HOSTING.md` with these steps for Windows, including how to find your LAN IP with `ipconfig`.
+The same as the blackjack project, (port 3000).
 
 ## Edge cases and disconnects
 
-No single player should be able to freeze or crash the table. When anything goes wrong, the round keeps going and the server stays up.
-
 | Situation | Behavior |
 | --- | --- |
-| Player disconnects on their own turn | Seat is held; the turn timer runs out and they stand automatically |
-| Player disconnects at any other time | Seat is held for 20 s, and they sit out betting while away |
-| Page refresh or reconnect within 20 s | The client sends its saved reconnect token (kept in localStorage) and gets the same seat back |
-| Reconnect after 20 s | Joins again with the same username and saved chips, and takes a seat from the next round |
-| Host's tab closes | The game continues; reopening the host link restores host controls |
-| Everyone has left | The game ends; only the host link can create a new one |
-| The server stops | Players see a "Connection lost" screen with a Retry button; chips are kept up to the last settled round |
-| Username already at the table | Join is rejected with "That name is in use" |
-| Wrong table password | Join is rejected with "Wrong password" |
-| Kicked player rejoins with the same username | Rejected until the server restarts |
-| All seats are full | The player watches and gets a seat when one frees up |
-| Double clicks or repeated messages | Buttons disable after a click, and the server ignores actions that aren't valid right now |
-| Bet above the player's chips or the limits | Rejected with an error message |
-| `players.json` is missing or unreadable | Start with no saved players, rename a broken file to `players.json.bak`, and log a warning |
+| Player disconnects on their own turn | The turn timer runs out and they check or fold. If the turn timer is off, they check or fold after 20 s |
+| Player disconnects at any other time | Seat held for 20 s; they stay in the current hand (and get auto-checked or folded on their turns) and sit out later hands until they return |
+| Page refresh or reconnect within 20 s | Same seat and same hole cards back, through the saved reconnect token |
+| Player leaves or is kicked during a hand | Their hand is folded at once; chips they already put in stay in the pot |
+| The button seat or a blind seat is empty after players leave | The button simply moves to the next dealt-in player; no dead-button rules in v1 |
+| Only one player left in a hand because the others left | That player wins the pot |
+| Fewer than 2 players can play | The table waits in `waiting` and shows "Waiting for players" |
+| Bet or raise outside the legal range | Rejected with `bad_amount` |
+| Everyone left / server stops / name in use / wrong password / kicked player rejoins / all seats full / broken `players.json` | As in blackjack |
 
 ## Phase 2: desktop app (build later)
 
-Don't build this in Phase 1. Once Phase 1 works, a second prompt wraps it in an Electron app, and Phase 1's game code should not need to change.
-
-- **One Windows app** with two buttons: Host game and Join game.
-- **Host game:** calls `startServer` inside the app on port 3000 (changeable), opens the host link in the app window, and shows the LAN URLs to share. Closing the app stops the server.
-- **Join game:** asks for the host's address as `host:port`, remembers the last one, and opens that table in the app window.
-- **Browser players** still join exactly as in Phase 1, so friends without the app can play, including on phones.
-- **Chips file:** lives in the app's user-data folder instead of `data/`.
-- **Build:** a Windows portable `.exe` made with electron-builder, to upload to GitHub Releases. The exe isn't code-signed, so Windows SmartScreen warns on first launch ("More info", then "Run anyway"). Add this to `HOSTING.md`.
+The same as the blackjack project's Phase 2 (one Windows Electron app with Host game and Join game, the chips file in the user-data folder, a portable `.exe` made with electron-builder), with port 3000 as the default.
 
 ## Out of scope for v1
 
 Don't build any of these.
 
-- Insurance, surrender and side bets, which are planned for a later version
-- More than one table, or lobbies with codes
-- A separately deployed website
-- Chat
-- Accounts, per-player passwords, a database, or stats beyond chip counts
-- Real money or payments of any kind
-- Computer-controlled players; only the dealer is automated
-- Anti-cheat beyond the server's own checks, since this is for friends
+- Other variants (Omaha, Stud, pot limit, fixed limit) and tournaments, including rising blinds
+- Antes, straddles, missed-blind or dead-button rules
+- Choosing to muck or show at showdown, showing cards after a fold win, rabbit hunting, running it twice
+- Pre-action buttons (check/fold in advance), time banks
+- Hand history export, stats, odds or equity displays
+- More than one table, lobbies, chat, accounts, real money
+- Computer-controlled players
 - The Electron app, until Phase 2
 
 ## Done-when checklist
 
 Phase 1 is finished when every item below passes. Claude Code should check each one and report any it could not verify itself.
 
-- [ ] `npm install && npm start` works in a fresh copy on Windows, and startup prints the host link and LAN URLs
-- [ ] Rules engine tests pass for soft aces, blackjack, dealer on soft 17 both ways, 3:2 and 6:5 payouts, push, double, split (allowed and refused cases, split aces, 21 after split paying 1:1, double after split, each hand settled separately) and reshuffle
-- [ ] An automated test with 2 simulated WebSocket clients joins, bets and plays 3 rounds without errors
+- [ ] `npm install && npm start` works in a fresh copy on Windows, starts on port 3000, and prints the host link and LAN URLs
+- [ ] Hand evaluator tests pass for every hand category, kickers, exact ties, the wheel (A-2-3-4-5) and steel wheel, no wraparound straights, best 5 of 7, and the board playing for a split
+- [ ] Betting engine tests pass for blinds (including heads-up order), min bet, min raise, a short all in that does not reopen betting, the big blind option, uncalled bets returned, a fold win, side pots with three players all in for different amounts, a split pot with an odd chip, and an all-in runout
+- [ ] A chip-conservation test: across many random seeded hands, total chips at the table only change by borrowing
+- [ ] An automated test with 3 simulated WebSocket clients plays 5 hands without errors
+- [ ] No message ever contains another player's hole cards before they are shown, or a board card before it is dealt, and the host token never appears in any message
 - [ ] In two browser tabs, the host's setting changes show up for the other player, and settings lock after Start
-- [ ] Two players can play 5 full rounds with the correct chip counts after each
-- [ ] Chips survive a server restart, a new username gets the starting chips, and Reset chips works
-- [ ] A player with no chips gets the borrow prompt, can borrow and keep playing, and the debt shows as "owes N" and survives a restart
-- [ ] A username already at the table is rejected, and a wrong password is rejected
-- [ ] The host can kick a player, who then can't rejoin with that username
-- [ ] The turn timer stands for an idle player, and the betting timer sits them out
-- [ ] Refreshing mid-round returns the player to the same seat
+- [ ] Two players can play 10 full hands with the correct chip counts after each, and the button and blinds move correctly
+- [ ] Chips, debt and earnings survive a server restart; a new username gets the starting chips; Reset chips, Borrow and Pay back work
+- [ ] Sit out works, and a sitting-out player isn't dealt in or charged blinds
+- [ ] A username already at the table and a wrong password are rejected; the host can kick a player, who then can't rejoin with that name
+- [ ] The turn timer checks or folds an idle player
+- [ ] Refreshing mid-hand returns the player to the same seat with the same cards
 - [ ] Closing a tab during that player's turn doesn't freeze the game
-- [ ] Out-of-turn actions, non-host settings changes and bets above the limit are rejected without a crash
-- [ ] The hole card never appears in a message before it's revealed, and the host token never appears in any message
+- [ ] Out-of-turn actions, non-host settings changes and illegal amounts are rejected without a crash
 - [ ] A phone on the same Wi-Fi joins through the LAN URL and can play
 - [ ] Sounds play (including on iPhone Safari), and the mute button works
 - [ ] No errors appear in the browser console or server log during the steps above
 
-Phase 2 is finished when:
-
-- [ ] electron-builder produces a Windows `.exe` that starts on a PC without Node installed
-- [ ] A player using Host game in the app, a player using Join game in a second copy, and a browser player all play at one table
-
 ## Instructions for Claude Code
 
-Save this doc as `SPEC.md` in an empty folder on your Windows PC, start Claude Code there, and paste the Phase 1 prompt. Once Phase 1 works and you've played a few rounds, paste the Phase 2 prompt.
+Copy the blackjack project into a new folder, save this doc there as `docs/SPEC.md` (replacing the blackjack spec), start Claude Code in that folder, and paste the Phase 1 prompt.
 
 **Phase 1 prompt**
 
 ```
-Read SPEC.md in full. Build Phase 1 (the browser version) exactly as specified.
+This folder is a copy of a finished, working multiplayer blackjack game.
+Read docs/SPEC.md in full: it specifies turning it into a No-Limit Texas
+Hold'em game. Then read the existing code before planning.
+
+Keep everything that isn't blackjack: architecture, file layout, coding
+style, visual design, host token, join screen, waiting room, reconnect,
+kicking, chip store, borrow/debt/earnings/pay back, sounds and HOSTING.md.
+Reuse that code; don't rewrite what already works. Replace the rules
+engine, round flow, table screen and action controls with poker.
 Do not build Phase 2 or anything listed under "Out of scope".
 
 Work in this order:
-1. Write a short plan: file layout, your choice of ws or Socket.IO and of
-   Vite or no bundler, and any part of the spec you find unclear.
-   Wait for my OK, then do the rest without stopping.
-2. Shared types and the rules engine (game.ts, deck.ts) with Vitest tests.
-   Run the tests and fix until they pass.
-3. Server: the table, host token, settings, WebSocket handling, message
-   checks, timers, reconnect, and chips saved in data/players.json.
-4. Client: join, waiting room and table screens, and Web Audio sounds.
-5. An automated test where 2 simulated WebSocket clients play 3 rounds.
-6. HOSTING.md for Windows.
-7. Go through the Done-when checklist for Phase 1. Run everything you can,
-   then list what you could not verify and how I can check it by hand.
+1. Write a short plan: which files you keep, change, add and delete, how
+   per-player table_state will work, and any part of the spec you find
+   unclear. Wait for my OK, then do the rest without stopping.
+2. hand.ts (hand evaluator) with Vitest tests. Run them and fix until
+   they pass.
+3. game.ts (betting engine: blinds, actions, min raise, side pots,
+   uncalled bets, showdown) and deck.ts, with tests including the
+   chip-conservation test. Run and fix until they pass.
+4. Shared types and server: table.ts state machine, per-player
+   table_state, hole-card privacy, timers, sit out, reconnect.
+   Update the multiplayer test to 3 clients playing 5 hands.
+5. Client: the poker table, action bar, showdown and sounds, in the
+   existing style. Use the screenshot script to check desktop and a
+   390 px phone width.
+6. Rename blackjack to poker everywhere and update HOSTING.md for
+   port 3000.
+7. Go through the Done-when checklist. Run everything you can, then list
+   what you could not verify and how I can check it by hand.
 
 Rules:
-- Use only the stack in the spec. Ask before adding other dependencies.
+- Use only the existing dependencies. Ask before adding any.
 - Keep game logic out of the networking code.
+- Commit after each step with a short message.
 - Where the spec is unclear, pick the simplest option and list your
   assumptions at the end.
 ```
 
-**Phase 2 prompt**
-
-```
-Read SPEC.md, section "Phase 2: desktop app". Phase 1 is done and works.
-Wrap it in an Electron app as specified, reusing startServer and the
-existing client. Don't duplicate code or change game behavior.
-Build the Windows portable .exe with electron-builder, then check the
-Phase 2 items in the Done-when checklist. Tell me which ones you could
-not verify yourself.
-```
-
-After each run, test it yourself with two browser tabs and then with your phone. Send fixes as short follow-up prompts, one problem each.
+After the run, test it yourself with two or three browser tabs and then with your phone. Send fixes as short follow-up prompts, one problem each.

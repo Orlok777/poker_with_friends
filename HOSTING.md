@@ -1,4 +1,4 @@
-# Hosting a game (Windows)
+# Hosting a game of Poker with Friends (Windows)
 
 One person hosts. Everyone else only needs a browser, on a PC or a phone.
 
@@ -23,7 +23,7 @@ Share one of these with players on your network:
 
 - Your browser opens the **host link** by itself. That link gives you the host controls (settings, Start, kick). **Do not share it.** If you close the tab, open the same link again to get the controls back.
 - Send players one of the other addresses. They paste it into their browser, type a username, and join.
-- To use another port: in PowerShell `$env:PORT=3001; npm start`, in Command Prompt `set PORT=3001 && npm start`.
+- To use another port: in PowerShell `$env:PORT=3002; npm start`, in Command Prompt `set PORT=3002 && npm start`.
 - To stop the game, press `Ctrl+C` in the terminal or close its window. That ends the game for everyone.
 
 Chips are saved per username in `data\players.json`. Delete that file to give everybody fresh chips.
@@ -78,15 +78,16 @@ Everything is sent unencrypted over plain `http`, and anyone who learns your add
 ## 3. Running a game
 
 1. Open the host link. Enter a username and click **Join**.
-2. In the waiting room, change the settings if you want (table password, starting chips, bets, timers, decks, dealer on soft 17, blackjack payout, double down). Players see them but cannot change them.
-3. When at least one player is ready, click **Start game**. Settings are locked from then on, until the server restarts.
-4. Players who join later go straight to the table and take a free seat from the next round. If every seat is full they watch until one frees up.
-5. You can kick a player with the button on their seat. A kicked player cannot rejoin with that name until the server restarts.
+2. In the waiting room, change the settings if you want (max players, table password, starting chips, small and big blind, turn timer). Players see them but cannot change them.
+3. When at least two players are ready, click **Start game**. Settings are locked from then on, until the server restarts.
+4. Players who join later go straight to the table and take a free seat and are dealt in from the next hand. If every seat is full they watch until one frees up.
+5. A new hand starts by itself after each one, as long as at least two seated players have chips and are not sitting out.
+6. You can kick a player with the button on their seat. A kicked player cannot rejoin with that name until the server restarts.
 
 ## Troubleshooting
 
 - **"Port 3000 is already in use"**: another program is using it. Close it, or start with a different port (see above).
-- **Players see "Connection lost"**: the server stopped or their network dropped. Chips are kept up to the last finished round. Click **Retry**.
-- **Refreshing the page**: a player who refreshes within 20 seconds gets the same seat back.
+- **Players see "Connection lost"**: the server stopped or their network dropped. Chips are kept up to the last finished hand. Click **Retry**.
+- **Refreshing the page**: a player who refreshes within 20 seconds gets the same seat and the same cards back.
 - **`data\players.json` got damaged**: the server renames it to `players.json.bak`, prints a warning and starts with no saved players.
 - **The browser did not open**: copy the host link from the terminal into your browser. Setting the environment variable `NO_OPEN=1` turns off the automatic opening.

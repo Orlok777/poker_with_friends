@@ -27,8 +27,8 @@ export interface ServerOptions {
   hostToken?: string;
   /** Seed for the shuffle. For tests. */
   seed?: number;
-  /** Cards dealt first. For tests. */
-  rigged?: Card[];
+  /** Cards dealt first in each hand, one list per hand. For tests. */
+  rigged?: Card[][];
   /** Shorter timers. For tests. */
   timing?: Partial<Timing>;
   /** Where warnings and errors go. Default console. */
@@ -215,7 +215,7 @@ async function main(): Promise<void> {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'EADDRINUSE') {
-      console.error(`Port ${port} is already in use. Close the other program or start with a different PORT, for example: set PORT=3001 && npm start`);
+      console.error(`Port ${port} is already in use. Close the other program or start with a different PORT, for example: set PORT=3002 && npm start`);
     } else {
       console.error(`Could not start the server: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -223,7 +223,7 @@ async function main(): Promise<void> {
   }
 
   console.log('');
-  console.log('Blackjack with friends is running.');
+  console.log('Poker with friends is running.');
   console.log('');
   console.log('  Host link (opens host controls, keep it to yourself):');
   console.log(`    ${server.hostUrl}`);

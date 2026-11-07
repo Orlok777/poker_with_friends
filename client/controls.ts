@@ -1,68 +1,75 @@
-// Betting panel and action buttons under the felt, plus their keyboard shortcuts.
+// The action bar under the felt: Fold, Check or Call, Bet or Raise to, with the amount box,
+// slider and presets, plus their keyboard shortcuts.
 
-import type { ActionName } from '../shared/types.js';
+import type { ActionKind, ClientMsg, LegalView, TableState } from '../shared/types.js';
 import { app, me, send } from './app.js';
-import { openBorrowPrompt } from './borrow.js';
-import { slideFrom, ringEl } from './cards.js';
-import { $, fmt, h } from './dom.js';
-import { playAllIn, playChip } from './sound.js';
-import { betOf, setBetSource, updatePendingBet } from './table.js';
+import { $, fmt } from './dom.js';
+import { playAllIn } from './sound.js';
 
-const CHIP_VALUES = [10, 25, 100, 500];
+/** How long the "Confirm all in?" question waits for a second click. */
+const ALL_IN_CONFIRM_MS = 3000;
 
-let pendingBet = 0;
-/** The last bet this player confirmed. Each new round starts with it already in the bet box. */
-let lastBet = 0;
-/** The round whose bet box was already filled with the last bet, so Clear is not undone by the next update. */
-let prefilledRound = -1;
 let actionBusy = false;
-
-export function getPendingBet(): number {
-  return pendingBet;
-}
+let allInArmed = false;
+let allInTimer: number | null = null;
+/** The turn the amount box was last filled for, so typing is not overwritten by the next update. */
+let amountTurn = '';
+let amount = 0;
 
 /** A new state arrived, so any request we were waiting on has been answered. */
 export function clearBusy(): void {
   actionBusy = false;
 }
 
-/** Most chips the player may bet right now. */
-function betCap(): number {
-  const s = app.state;
-  const self = me();
-  return s && self ? self.chips : 0;
+function legal(): LegalView | null {
+  return app.state?.you?.legal ?? null;
 }
 
-function setPending(value: number, from?: Element): void {
-  pendingBet = Math.max(0, Math.min(value, betCap()));
+/** Chips in the pots plus everything in front of the players. */
+function potTotal(s: TableState): number {
+  return s.pots.reduce((sum, p) => sum + p.amount, 0) + s.players.reduce((sum, p) => sum + p.bet, 0);
+}
+
+function clamp(value: number, l: LegalView): number {
+  return Math.max(l.minTo, Math.min(l.maxTo, Math.round(value)));
+}
+
+/** A pot-sized bet or raise, or a fraction of one: call first, then add that part of the pot. */
+function potTo(s: TableState, l: LegalView, fraction: number): number {
+  const self = me();
+  const myBet = self?.bet ?? 0;
+  const current = myBet + l.callAmount;
+  const afterCall = potTotal(s) + l.callAmount;
+  return clamp(current + afterCall * fraction, l);
+}
+
+function setAmount(value: number): void {
+  const l = legal();
+  if (!l || !(l.canBet || l.canRaise)) return;
+  amount = clamp(value, l);
   renderControls();
-  const s = app.state;
-  const self = me();
-  if (s && self && s.phase !== 'waiting') {
-    updatePendingBet(s, self, pendingBet);
-    const disc = document.querySelector('#my-spot .bet-chip.pending .chip-disc');
-    if (from && disc) slideFrom(disc as HTMLElement, from);
-  }
 }
 
-function confirmBet(): void {
-  const btn = $<HTMLButtonElement>('confirm-bet');
-  if (btn.disabled || actionBusy) return;
+function sendAction(msg: ClientMsg): void {
+  if (actionBusy) return;
   actionBusy = true;
-  lastBet = pendingBet;
-  playChip();
-  setBetSource($('pending-bet'));
-  send({ type: 'place_bet', amount: pendingBet });
+  send(msg);
   renderControls();
+}
+
+function act(kind: 'fold' | 'call' | 'raise'): void {
+  const l = legal();
+  if (!l || actionBusy) return;
+  disarmAllIn();
+  if (kind === 'fold') return sendAction({ type: 'action', action: 'fold' });
+  if (kind === 'call') return sendAction({ type: 'action', action: l.canCheck ? 'check' : 'call' });
+  if (!(l.canBet || l.canRaise)) return;
+  const to = clamp(amount, l);
+  if (to === l.allInTo) playAllIn();
+  sendAction({ type: 'action', action: (l.canBet ? 'bet' : 'raise') as ActionKind, amount: to });
 }
 
 // ------------------------------------------------------------------ all in
-
-/** How long the "Confirm all in?" question waits for a second click. */
-const ALL_IN_CONFIRM_MS = 3000;
-
-let allInArmed = false;
-let allInTimer: number | null = null;
 
 function disarmAllIn(): void {
   if (allInTimer !== null) window.clearTimeout(allInTimer);
@@ -73,42 +80,24 @@ function disarmAllIn(): void {
 }
 
 function onAllInClick(): void {
-  const btn = $<HTMLButtonElement>('allin-btn');
-  const self = me();
-  if (btn.disabled || actionBusy || !self) return;
+  const l = legal();
+  if (!l || !l.canAllIn || actionBusy) return;
   if (!allInArmed) {
     allInArmed = true;
     allInTimer = window.setTimeout(disarmAllIn, ALL_IN_CONFIRM_MS);
+    if (l.canBet || l.canRaise) amount = l.maxTo;
     renderControls();
     return;
   }
-  // Second click: the whole stack becomes the bet and is confirmed.
+  // Second click: the whole stack goes in.
   if (allInTimer !== null) window.clearTimeout(allInTimer);
   allInTimer = null;
   allInArmed = false;
-  actionBusy = true;
-  pendingBet = self.chips;
-  lastBet = self.chips;
   playAllIn();
-  setBetSource($('pending-bet'));
-  send({ type: 'place_bet', amount: self.chips });
-  renderControls();
+  sendAction({ type: 'action', action: 'all_in' });
 }
 
-const ACTION_BUTTONS: Record<ActionName, string> = {
-  hit: 'hit-btn',
-  stand: 'stand-btn',
-  double: 'double-btn',
-  split: 'split-btn',
-};
-
-function act(action: ActionName): void {
-  const btn = $<HTMLButtonElement>(ACTION_BUTTONS[action]);
-  if (btn.disabled || actionBusy) return;
-  actionBusy = true;
-  send({ type: 'action', action });
-  renderControls();
-}
+// ---------------------------------------------------------------- keyboard
 
 /** Brief pressed look when a shortcut key is used, so the player sees which button fired. */
 function flash(id: string): void {
@@ -119,54 +108,67 @@ function flash(id: string): void {
   window.setTimeout(() => el.classList.remove('key-pressed'), 160);
 }
 
+const KEYS: Record<string, ['fold' | 'call' | 'raise', string]> = {
+  f: ['fold', 'fold-btn'],
+  c: ['call', 'call-btn'],
+  r: ['raise', 'raise-btn'],
+};
+
 function onKey(ev: KeyboardEvent): void {
-  const target = ev.target as HTMLElement | null;
-  // Pressing any other key cancels a pending all in. Enter/Space on the button itself is its own click.
+  const target = ev.target instanceof HTMLElement ? ev.target : null;
+  // Pressing any other key cancels a pending all in.
   if (allInArmed && !target?.closest('#allin-btn')) disarmAllIn();
   if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
-  if ($('screen-table').hidden) return;
-  if (target && (target.closest('input, textarea, select, [contenteditable="true"]') !== null)) return;
-  // Leave Enter and Space alone on buttons outside the controls (log, rules, leave...).
-  const onOtherButton = target?.closest('button') && !target.closest('.table-controls');
-
-  const key = ev.key.toLowerCase();
-  if (key === 'enter') {
-    if (onOtherButton || $('bet-bar').hidden || $<HTMLButtonElement>('confirm-bet').disabled) return;
-    ev.preventDefault(); // otherwise Enter on a focused chip would add another chip
-    flash('confirm-bet');
-    confirmBet();
+  if ($('screen-table').hidden || $('action-bar').hidden) return;
+  // Enter in the amount box bets or raises that amount.
+  if (target?.id === 'amount-input' && ev.key === 'Enter') {
+    ev.preventDefault();
+    readAmountInput();
+    flash('raise-btn');
+    act('raise');
     return;
   }
-  const KEYS: Record<string, ActionName> = { h: 'hit', s: 'stand', d: 'double', p: 'split' };
-  const action: ActionName | null = KEYS[key] ?? null;
-  if (!action || $('action-bar').hidden) return;
-  const id = ACTION_BUTTONS[action];
+  if (target && target.closest('input, textarea, select, [contenteditable="true"]') !== null) return;
+  const hit = KEYS[ev.key.toLowerCase()];
+  if (!hit) return;
+  const [kind, id] = hit;
   if ($<HTMLButtonElement>(id).disabled) return;
   ev.preventDefault();
   flash(id);
-  act(action);
+  act(kind);
 }
 
+function readAmountInput(): void {
+  const input = $<HTMLInputElement>('amount-input');
+  const value = Number(input.value);
+  if (input.value !== '' && Number.isFinite(value)) setAmount(value);
+  else renderControls();
+}
+
+// -------------------------------------------------------------------- init
+
 export function initControls(): void {
-  const box = $('chip-buttons');
-  for (const v of CHIP_VALUES) {
-    const b = h('button', `chip-btn c${v}`);
-    b.type = 'button';
-    b.dataset.value = String(v);
-    b.setAttribute('aria-label', `Add ${v} to your bet`);
-    b.append(h('span', 'chip-face num', String(v)));
-    b.addEventListener('click', () => {
-      playChip();
-      setPending(pendingBet + v, b);
-    });
-    box.append(b);
-  }
-  $('bet-ring-slot').append(ringEl('bet-ring'));
-  $('clear-bet').addEventListener('click', () => setPending(0));
-  $('half-bet').addEventListener('click', (ev) => setPending(Math.floor(pendingBet / 2), ev.currentTarget as Element));
-  $('double-bet').addEventListener('click', (ev) => setPending(pendingBet * 2, ev.currentTarget as Element));
-  $('confirm-bet').addEventListener('click', confirmBet);
+  $('fold-btn').addEventListener('click', () => act('fold'));
+  $('call-btn').addEventListener('click', () => act('call'));
+  $('raise-btn').addEventListener('click', () => {
+    readAmountInput();
+    act('raise');
+  });
   $('allin-btn').addEventListener('click', onAllInClick);
+  const input = $<HTMLInputElement>('amount-input');
+  input.addEventListener('change', readAmountInput);
+  input.addEventListener('focus', () => input.select());
+  const slider = $<HTMLInputElement>('amount-slider');
+  slider.addEventListener('input', () => setAmount(Number(slider.value)));
+  for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-preset]')) {
+    btn.addEventListener('click', () => {
+      const s = app.state;
+      const l = legal();
+      if (!s || !l) return;
+      const preset = btn.dataset.preset!;
+      setAmount(preset === 'min' ? l.minTo : potTo(s, l, Number(preset)));
+    });
+  }
   // Clicking anything else cancels the all-in question (capture, so it runs before that click's own handler).
   document.addEventListener(
     'pointerdown',
@@ -175,81 +177,86 @@ export function initControls(): void {
     },
     true,
   );
-  $('borrow-btn').addEventListener('click', openBorrowPrompt);
-  for (const action of Object.keys(ACTION_BUTTONS) as ActionName[]) {
-    $(ACTION_BUTTONS[action]).addEventListener('click', () => act(action));
-  }
   document.addEventListener('keydown', onKey);
 }
 
-/** Shows the bet panel or the action buttons and enables what the player can do right now. */
+// ------------------------------------------------------------------ render
+
+/** Shows the action bar while I am in the hand and enables what I can do right now. */
 export function renderControls(): void {
   const s = app.state;
   const self = me();
-  if (!s || !self || s.phase === 'waiting') return;
+  if (!s || !self || !s.started) return;
 
-  const seated = self.seat !== null;
-  const myBet = betOf(self);
-  const outOfChips = self.chips < s.settings.minBet && myBet === 0;
-  const canBet = s.phase === 'betting' && seated && myBet === 0 && !outOfChips && s.deadline !== null;
-  if (!canBet) pendingBet = 0;
-  const cap = betCap();
-  // A new betting round starts with the last bet already in the box, ready to confirm.
-  if (canBet && prefilledRound !== s.round) {
-    prefilledRound = s.round;
-    const again = Math.min(lastBet, cap);
-    if (pendingBet === 0 && again >= s.settings.minBet) pendingBet = again;
+  const betting = s.phase === 'preflop' || s.phase === 'flop' || s.phase === 'turn' || s.phase === 'river';
+  const inPlay = betting && self.inHand && !self.folded && !self.allIn;
+  $('action-bar').hidden = !inPlay;
+
+  const l = legal();
+  const myTurn = !!l && !actionBusy;
+  const turnKey = l ? `${s.hand}:${s.phase}:${l.minTo}:${l.callAmount}` : '';
+  if (l && turnKey !== amountTurn) {
+    // A new decision: the amount box starts at the minimum bet or raise.
+    amountTurn = turnKey;
+    amount = l.minTo;
   }
-  const busy = actionBusy;
-
-  // ---- all in: the button is enabled with at least the minimum bet; armed shows the confirm question
-  const allInBtn = $<HTMLButtonElement>('allin-btn');
-  const allInOk = canBet && !busy && self.chips >= s.settings.minBet;
-  if (!allInOk && allInArmed) {
+  if (!l && allInArmed) {
     allInArmed = false;
     if (allInTimer !== null) window.clearTimeout(allInTimer);
     allInTimer = null;
   }
-  allInBtn.disabled = !allInOk;
-  allInBtn.classList.toggle('armed', allInArmed);
-  $('allin-label').textContent = allInArmed ? `Confirm all in (${fmt(self.chips)})?` : 'All in';
-  allInBtn.title = allInArmed ? 'Click again to bet everything' : 'Bet all your chips';
 
-  // ---- betting
-  const betBar = $('bet-bar');
-  betBar.hidden = !(s.phase === 'betting' && seated && myBet === 0 && s.deadline !== null);
-  betBar.classList.toggle('out-of-chips', outOfChips);
-  $('pending-bet').textContent = fmt(pendingBet);
-  $('bet-limits').textContent = `Min ${fmt(s.settings.minBet)}`;
-  for (const b of document.querySelectorAll<HTMLButtonElement>('.chip-btn')) {
-    b.disabled = !canBet || busy || pendingBet >= cap;
+  // Fold
+  $<HTMLButtonElement>('fold-btn').disabled = !myTurn;
+
+  // Check or Call: Check is never shown when there is something to call.
+  const highest = Math.max(0, ...s.players.map((p) => p.bet));
+  const toCall = l ? l.callAmount : Math.min(self.chips, Math.max(0, highest - self.bet));
+  const canCheck = l ? l.canCheck : toCall === 0;
+  $('call-label').textContent = canCheck ? 'Check' : `Call ${fmt(toCall)}`;
+  $<HTMLButtonElement>('call-btn').disabled = !myTurn;
+
+  // Bet or Raise to
+  const canSize = !!l && (l.canBet || l.canRaise);
+  const noBet = l ? l.canBet || (!l.canRaise && highest === 0) : highest === 0;
+  const verb = noBet ? 'Bet' : 'Raise to';
+  $('raise-label').textContent = canSize ? `${verb} ${fmt(amount)}` : verb;
+  $<HTMLButtonElement>('raise-btn').disabled = !myTurn || !canSize;
+
+  const input = $<HTMLInputElement>('amount-input');
+  const slider = $<HTMLInputElement>('amount-slider');
+  input.disabled = !myTurn || !canSize;
+  slider.disabled = !myTurn || !canSize;
+  if (canSize) {
+    input.min = String(l!.minTo);
+    input.max = String(l!.maxTo);
+    slider.min = String(l!.minTo);
+    slider.max = String(l!.maxTo);
+    slider.step = '1';
+    slider.value = String(amount);
+    if (document.activeElement !== input) input.value = String(amount);
+  } else {
+    input.value = '';
+    slider.value = slider.min;
   }
-  $<HTMLButtonElement>('clear-bet').disabled = !canBet || busy || pendingBet === 0;
-  $<HTMLButtonElement>('half-bet').disabled = !canBet || busy || pendingBet < 2;
-  $<HTMLButtonElement>('double-bet').disabled = !canBet || busy || pendingBet === 0 || pendingBet >= cap;
-  $<HTMLButtonElement>('confirm-bet').disabled = !canBet || busy || pendingBet < s.settings.minBet;
-  const borrow = $<HTMLButtonElement>('borrow-btn');
-  borrow.hidden = !outOfChips || s.deadline === null;
-  borrow.disabled = busy;
+  for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-preset]')) btn.disabled = !myTurn || !canSize;
 
-  // ---- actions: shown for the whole round so the layout does not jump between phases
-  const inRound = seated && (self.hands[0]?.cards.length ?? 0) > 0;
-  $('action-bar').hidden = !(inRound && s.phase !== 'betting');
-  const myTurn = s.phase === 'player_turns' && s.turn === self.id && !busy;
-  $<HTMLButtonElement>('hit-btn').disabled = !myTurn;
-  $<HTMLButtonElement>('stand-btn').disabled = !myTurn;
-  $<HTMLButtonElement>('double-btn').disabled = !(myTurn && self.hands[self.activeHand]?.canDouble);
-  // Split is always shown; it is only enabled when splitting is allowed right now.
-  $<HTMLButtonElement>('split-btn').disabled = !(myTurn && self.canSplit);
-  $('action-bar').classList.toggle('my-turn', s.phase === 'player_turns' && s.turn === self.id);
+  // All in, with a confirm step
+  const allIn = $<HTMLButtonElement>('allin-btn');
+  allIn.disabled = !myTurn || !l?.canAllIn;
+  allIn.classList.toggle('armed', allInArmed);
+  $('allin-label').textContent = allInArmed && l ? `Confirm all in (${fmt(l.allInTo)})?` : 'All in';
+  allIn.title = allInArmed ? 'Click again to put in all your chips' : 'Put in all your chips';
+
+  $('action-bar').classList.toggle('my-turn', !!l);
 
   // ---- note
   const note = $('watch-note');
   let text = '';
-  if (seated && s.phase === 'betting' && outOfChips) text = "You're out of chips. Borrow a buy-in to keep playing.";
-  else if (seated && s.phase === 'betting' && myBet > 0) text = 'Bet placed. Waiting for the others.';
-  else if (seated && self.hands.length === 0 && s.phase !== 'betting') text = "You're sitting out this round.";
+  if (self.seat === null) text = "You're watching. You'll get a seat as soon as one frees up.";
+  else if (betting && self.inHand && self.folded) text = 'You folded. Waiting for the next hand.';
+  else if (betting && self.inHand && self.allIn) text = "You're all in.";
+  else if (betting && !self.inHand) text = self.sittingOut ? "You're sitting out." : "You're dealt in from the next hand.";
   note.textContent = text;
   note.hidden = text === '';
 }
-

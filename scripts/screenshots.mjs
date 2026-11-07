@@ -1,8 +1,8 @@
 // Takes screenshots of every screen and phase at desktop and phone size.
 // Run with `npm run screenshots` (it builds first). Output goes to ./screenshots (not committed).
 //
-// One real browser player ("Maya", the host) plays against three scripted bots over WebSocket.
-// The deck is rigged so each run looks the same: Maya wins, Alex pushes, Sam busts, Riley wins.
+// One real browser player ("Maya", the host) plays a hand against three scripted bots over WebSocket.
+// The first hand is rigged so each run looks the same and ends in a showdown.
 
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,9 +29,8 @@ function cards(text) {
   });
 }
 
-// Deal order: each player, dealer up, each player, dealer hole. Then draws in play order.
-// Players: Maya, Alex, Sam, Riley.
-const RIGGED = cards('AH 10S 8D KC 9C  6S 8C 6H 9D 7D  3C 10D 2S');
+// Hole cards go out one at a time from the left of the button, then the board.
+const RIGGED = [cards('AH KD 9S QC AD 7C 9C JC  KH 2H 9H 5D 4S')];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -41,6 +40,9 @@ class Bot {
     this.state = null;
     this.id = '';
     this.waiters = new Set();
+    /** When true, the bot checks or calls on its own as soon as it is its turn. */
+    this.auto = false;
+    this.acted = new Set();
   }
   async open(port) {
     this.ws = new WebSocket(`ws://127.0.0.1:${port}`);
@@ -49,6 +51,7 @@ class Bot {
       if (msg.type === 'joined') this.id = msg.playerId;
       if (msg.type === 'table_state') {
         this.state = msg;
+        this.play();
         for (const w of [...this.waiters]) w();
       }
     });
@@ -57,11 +60,21 @@ class Bot {
       this.ws.once('error', rej);
     });
   }
+  play() {
+    const s = this.state;
+    const legal = s?.you?.legal;
+    if (!this.auto || !legal || s.turn !== this.id) return;
+    const key = `${s.hand}:${s.phase}:${s.log.at(-1)?.id}`;
+    if (this.acted.has(key)) return;
+    this.acted.add(key);
+    setTimeout(() => this.send({ type: 'action', action: legal.canCheck ? 'check' : 'call' }), 250);
+  }
+  setAuto(on) {
+    this.auto = on;
+    this.play();
+  }
   send(msg) {
     this.ws.send(JSON.stringify(msg));
-  }
-  me() {
-    return this.state?.players.find((p) => p.id === this.id);
   }
   waitFor(pred, what, timeout = 15000) {
     if (this.state && pred(this.state)) return Promise.resolve(this.state);
@@ -86,7 +99,7 @@ class Bot {
 }
 
 async function run(browser, label, vp) {
-  const dataDir = mkdtempSync(join(tmpdir(), 'bj-shots-'));
+  const dataDir = mkdtempSync(join(tmpdir(), 'poker-shots-'));
   const server = await startServer({
     port: 0,
     dataDir,
@@ -94,7 +107,7 @@ async function run(browser, label, vp) {
     rigged: RIGGED,
     seed: 7,
     log: () => {},
-    timing: { dealMs: 350, dealerStepMs: 2600, settleMs: 60_000, holdMs: 60_000, bettingMs: 120_000, turnMs: 30_000 },
+    timing: { dealMs: 300, streetMs: 600, potMs: 1500, showdownMs: 60_000, foldWinMs: 60_000, holdMs: 60_000, turnMs: 30_000 },
   });
   const base = `http://localhost:${server.port}`;
   const context = await browser.newContext({
@@ -114,16 +127,6 @@ async function run(browser, label, vp) {
     if (overflow > 0) console.warn(`  ! ${label}/${name}: page is ${overflow}px wider than the viewport`);
     await page.screenshot({ path: join(OUT, `${label}-${name}.png`) });
     console.log(`  ${label}-${name}.png`);
-  };
-
-  /** Presses a shortcut key; falls back to clicking the button (and says so) when the key does nothing. */
-  const pressOrClick = async (key, selector, done) => {
-    await page.keyboard.press(key);
-    for (let i = 0; i < 20 && !done(); i++) await sleep(50);
-    if (!done()) {
-      console.warn(`  ! ${label}: key "${key}" did nothing, clicking ${selector}`);
-      await page.click(selector);
-    }
   };
 
   const bots = [];
@@ -172,38 +175,38 @@ async function run(browser, label, vp) {
     riley.send({ type: 'set_ready', ready: true });
     await alex.waitFor((s) => s.players.filter((p) => p.ready).length === 4, 'all ready');
     await page.click('#start-btn');
-    await alex.waitFor((s) => s.phase === 'betting', 'betting');
 
-    alex.send({ type: 'place_bet', amount: 50 });
-    sam.send({ type: 'place_bet', amount: 25 });
-    riley.send({ type: 'place_bet', amount: 100 });
-    await alex.waitFor((s) => s.players.filter((p) => (p.hands[0]?.bet ?? 0) > 0).length === 3, 'bot bets');
-    await page.click('.chip-btn[data-value="100"]');
-    await page.click('.chip-btn[data-value="25"]');
-    await page.click('.chip-btn[data-value="25"]');
-    await shot('3-betting');
+    const mayaId = () => alex.state.players.find((p) => p.name === 'Maya').id;
+    const mayasTurn = (s) => s.turn === mayaId();
 
-    await pressOrClick('Enter', '#confirm-bet', () => (alex.state.players.find((p) => p.name === 'Maya').hands[0]?.bet ?? 0) > 0);
-    await alex.waitFor((s) => s.phase === 'player_turns', 'player turns');
-    await shot('4-my-turn');
+    // Everyone before Maya calls; then it is her turn.
+    for (const b of bots) b.setAuto(true);
+    await alex.waitFor(mayasTurn, "Maya's turn");
+    for (const b of bots) b.setAuto(false);
+    await shot('3-preflop-my-turn');
 
-    await pressOrClick('h', '#hit-btn', () => alex.state.players.find((p) => p.name === 'Maya').hands[0]?.cards.length === 3);
-    await alex.waitFor((s) => s.players.find((p) => p.name === 'Maya').hands[0]?.cards.length === 3, 'Maya hits');
-    await shot('4b-my-turn-after-hit');
-    await pressOrClick('s', '#stand-btn', () => alex.state.turn !== alex.state.players.find((p) => p.name === 'Maya').id);
-    await alex.waitFor((s) => s.turn === alex.id, "Alex's turn");
+    // Maya raises half the pot with the keyboard, then a bot thinks about it.
+    await page.click('[data-preset="0.5"]');
+    await page.keyboard.press('r');
+    await alex.waitFor((s) => !mayasTurn(s) && s.turn !== null, 'next player');
     await sleep(1500); // the countdown visibly runs
-    await shot('5-other-turn');
+    await shot('4-other-turn');
 
-    alex.send({ type: 'action', action: 'stand' });
-    await sam.waitFor((s) => s.turn === sam.id, "Sam's turn");
-    sam.send({ type: 'action', action: 'hit' });
-    await riley.waitFor((s) => s.turn === riley.id, "Riley's turn");
-    riley.send({ type: 'action', action: 'stand' });
-    await alex.waitFor((s) => s.phase === 'dealer_turn' && !s.dealer.cards.some((c) => c.hidden), 'dealer reveal');
-    await shot('6-dealer-turn');
+    // The bots call, and the flop comes.
+    for (const b of bots) b.setAuto(true);
+    await alex.waitFor((s) => s.phase === 'flop' && mayasTurn(s), 'flop, Maya to act');
+    await shot('5-flop-my-turn');
 
-    await alex.waitFor((s) => s.phase === 'settle', 'settle', 20000);
+    // Maya checks down to the showdown.
+    while (true) {
+      const s = await alex.waitFor((st) => mayasTurn(st) || st.phase === 'showdown' || st.phase === 'hand_over', 'Maya or showdown');
+      if (!mayasTurn(s)) break;
+      await page.keyboard.press('c');
+      await alex.waitFor((st) => !mayasTurn(st), 'Maya checked');
+    }
+    await alex.waitFor((s) => s.phase === 'showdown' && s.potsAwarded === 0, 'showdown');
+    await shot('6-showdown');
+    await alex.waitFor((s) => s.phase === 'hand_over', 'results', 20000);
     await shot('7-results');
 
     const logBtn = await page.$('#log-btn');
@@ -217,6 +220,7 @@ async function run(browser, label, vp) {
     if (rulesBtn) {
       await rulesBtn.click();
       await shot('9-rules');
+      await page.keyboard.press('Escape');
     }
 
     await server.close();
