@@ -1,13 +1,16 @@
-/* The table screen: felt and rail, board, pots, seats, cards, chips and countdown rings. */
+/* The table screen: the other players' nameplates along the top, the felt band with the board and pots,
+   and the dock at the bottom with the pot total, the action row and my seat. */
 
 .table-screen {
+  --seat-cw: 44px; /* the cards under each nameplate */
   height: 100vh;
   height: 100dvh;
   max-width: 1280px;
   margin: 0 auto;
-  padding: 0 20px 14px;
+  padding: 0 20px 12px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 10px;
 }
 
 .table-bar {
@@ -20,52 +23,326 @@
   color: var(--text-muted);
 }
 
+/* -------------------------------------------------------------- top strip */
+
+/* The nameplates and the bets row share their columns, so each stack of chips sits under its player. */
+.opponents,
+.bets {
+  display: grid;
+  grid-template-columns: repeat(var(--n, 1), minmax(0, 190px));
+  justify-content: space-evenly;
+  column-gap: 10px;
+}
+
+.opponents {
+  position: relative;
+  z-index: 3;
+  margin-top: -6px;
+}
+
+.opponents:empty {
+  display: none;
+}
+
+.plate {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  transition: opacity var(--t-fade) var(--ease);
+}
+
+.plate-box {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  gap: 4px;
+  padding: 7px 10px 9px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-2);
+  transition:
+    box-shadow var(--t-fade) var(--ease),
+    border-color var(--t-fade) var(--ease),
+    background-color var(--t-fade) var(--ease);
+}
+
+.plate.is-turn .plate-box {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 26px rgba(245, 185, 66, 0.3);
+}
+
+.plate.winner .plate-box {
+  border-color: var(--win);
+  box-shadow: 0 0 22px rgba(34, 197, 94, 0.35);
+}
+
+.plate.folded .plate-box,
+.plate.idle .plate-box {
+  opacity: 0.62;
+}
+
+/* Lost connection: a dashed plate that stays where it is. */
+.plate.away .plate-box {
+  border-style: dashed;
+  opacity: 0.62;
+}
+
+.plate-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  max-width: 100%;
+  min-height: 22px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.plate-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plate-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px 8px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.plate-chips::before,
+.me-chips::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  margin-right: -2px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.75;
+}
+
+/* The last action under the name: FOLDED muted, every other action in amber. */
+.act-pill {
+  display: inline-block;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 22px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: var(--r-pill);
+}
+
+.act-pill.muted {
+  color: var(--text-faint);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.act-pill.amber {
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(245, 185, 66, 0.35);
+}
+
+.act-pill.strong {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+/* At showdown the pill names the hand. */
+.act-pill.hand {
+  padding: 0 4px;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--accent);
+}
+
+.act-pill.blank {
+  visibility: hidden;
+}
+
+/* The cards hang below the plate, onto the felt. */
+.plate .hand-box.size-sm {
+  position: absolute;
+  top: calc(100% - 8px);
+  left: 50%;
+  z-index: 0;
+  transform: translateX(-50%);
+  --cw: var(--seat-cw);
+}
+
+/* Face up at showdown: clear of the plate, so the corners can be read. */
+.plate .hand-box.face-up {
+  top: calc(100% + 3px);
+}
+
+.plate.folded .hand {
+  opacity: 0.22;
+  transform: translateY(-10px) scale(0.9);
+  transition:
+    opacity var(--t-fade) var(--ease),
+    transform var(--t-fade) var(--ease);
+}
+
+.plate-ring {
+  width: 22px;
+  height: 22px;
+}
+
+.plate-ring .ring-track,
+.plate-ring .ring-prog {
+  stroke-width: 4.5;
+}
+
+.plate-ring .ring-num {
+  font-size: 10px;
+}
+
+.plate-kick {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  z-index: 3;
+  width: 24px;
+  height: 24px;
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  opacity: 0;
+}
+
+.plate-kick svg.icon {
+  width: 14px;
+  height: 14px;
+}
+
+.plate:hover .plate-kick,
+.plate-kick:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .plate-kick {
+    opacity: 0.7;
+  }
+}
+
+.dealer-tag,
+.blind-tag {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  border-radius: var(--r-pill);
+}
+
+.dealer-tag {
+  width: 20px;
+  padding: 0;
+  color: #1a1a1a;
+  background: #fbfbfa;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px #d4d4d4;
+}
+
+.blind-tag {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* -------------------------------------------------------------- felt band */
+
 .felt-wrap {
   min-height: 0;
   display: grid;
-  /* Room for the wooden rail, which is drawn outside the felt. */
-  padding: 18px 18px 20px;
+  /* Room for the rail, which is drawn outside the felt. */
+  padding: 0 7px;
 }
-
-/* ------------------------------------------------------------------- felt */
 
 .felt {
   --rail: #6b4426;
   position: relative;
   min-height: 0;
   isolation: isolate;
-  background: radial-gradient(ellipse 70% 62% at 50% 45%, #125038 0%, var(--felt) 70%, var(--felt-deep) 100%);
-  border-radius: 999px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: radial-gradient(ellipse 62% 75% at 50% 55%, #125038 0%, var(--felt) 70%, var(--felt-deep) 100%);
+  border-radius: 34px;
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.05),
     inset 0 0 60px rgba(0, 0, 0, 0.45),
-    0 0 0 13px var(--rail),
-    0 0 0 14px #8a5a35,
-    0 0 0 17px #3b2414,
+    0 0 0 5px var(--rail),
+    0 0 0 6px #8a5a35,
+    0 0 0 8px #3b2414,
     var(--shadow-3);
 }
 
-/* The wood grain and the faint betting line on the felt. */
-.felt::before {
-  content: '';
-  position: absolute;
-  inset: 13%;
-  border: 2px solid var(--felt-line);
-  border-radius: 999px;
-  pointer-events: none;
-  z-index: -1;
+/* The bets row sits under the cards that hang from the nameplates. Same columns as the strip, so the
+   felt-wrap padding is taken back here. */
+.bets {
+  margin: 0 -7px;
+  padding-top: calc(var(--seat-cw) * 1.4 - 4px);
+  min-height: calc(var(--seat-cw) * 1.4 + 30px);
+  align-items: start;
+}
+
+.bet-cell {
+  display: grid;
+  justify-items: center;
+  min-width: 0;
 }
 
 .center {
-  position: absolute;
-  left: 50%;
-  top: 46%;
-  transform: translate(-50%, -50%);
+  min-height: 0;
   display: grid;
+  align-content: center;
   justify-items: center;
   gap: 10px;
-  z-index: 1;
+  padding: 4px 16px 16px;
 }
+
+/* My chips in front of me, at the bottom of the felt above my cards. */
+.my-bet-slot {
+  position: absolute;
+  right: 28px;
+  bottom: 14px;
+  z-index: 2;
+}
+
+.table-bet {
+  animation: chip-in 280ms var(--ease) both;
+}
+
+/* Phones have no bets row: there the chips in front sit on the plate. */
+.plate .inline-bet {
+  display: none;
+}
+
+/* ------------------------------------------------------------- phase pill */
 
 .phase-pill {
   display: inline-flex;
@@ -87,7 +364,7 @@
 }
 
 .felt-rules {
-  margin: 0;
+  margin: 0 0 4px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.16em;
@@ -95,6 +372,9 @@
   text-align: center;
   color: var(--felt-text);
 }
+
+
+/* ------------------------------------------------------------------ board */
 
 .board-wrap {
   position: relative;
@@ -355,34 +635,7 @@
   color: #fda4af;
 }
 
-.hand-ring {
-  position: absolute;
-  top: calc(50% - 23px);
-  left: -56px;
-  z-index: 2;
-  width: 46px;
-  height: 46px;
-}
 
-.hand-ring .ring-num {
-  font-size: 15px;
-}
-
-.seat-ring {
-  width: 22px;
-  height: 22px;
-}
-
-.seat-ring .ring-track,
-.seat-ring .ring-prog {
-  stroke-width: 4.5;
-}
-
-.seat-ring .ring-num {
-  font-size: 10px;
-}
-
-/* The countdown bar along the bottom of the current player's name plate. */
 .timer-bar {
   position: absolute;
   left: 8px;
@@ -474,291 +727,121 @@
   --disc: var(--chip-500);
 }
 
-/* Chips in front of a player, between their seat and the middle. */
-.table-bet,
-.dealer-btn {
-  position: absolute;
-  left: var(--x);
-  top: var(--y);
-  transform: translate(-50%, -50%);
-  z-index: 2;
-  animation: chip-in 280ms var(--ease) both;
+
+/* The board grows with the window height. */
+.board {
+  --cw: clamp(54px, 12vh, 100px);
 }
 
-.inline-bet {
-  display: none;
-}
+/* ------------------------------------------------------------------- dock */
 
-.dealer-btn {
+.dock {
   display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  font-size: 13px;
-  font-weight: 800;
-  color: #1a1a1a;
-  background: #fbfbfa;
-  border-radius: 50%;
-  box-shadow:
-    inset 0 0 0 2px #d4d4d4,
-    0 2px 6px rgba(0, 0, 0, 0.45);
-  animation: none;
-  transition:
-    left 400ms var(--ease),
-    top 400ms var(--ease);
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'controls me';
+  align-items: end;
+  gap: 12px 24px;
 }
 
-.dealer-tag,
-.blind-tag {
-  display: inline-grid;
-  place-items: center;
-  min-width: 20px;
-  height: 18px;
-  padding: 0 5px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  border-radius: var(--r-pill);
+.my-spot {
+  grid-area: me;
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+  min-width: 0;
 }
 
-.dealer-tag {
-  color: #1a1a1a;
-  background: #fbfbfa;
-}
-
-.blind-tag {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.14);
-}
-
-/* The dealer tag is only needed where the white button is not drawn (phones, my own name line). */
-.seat .dealer-tag {
-  display: none;
-}
-
-/* ------------------------------------------------------------------ seats */
-
-.others {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.seat {
-  position: absolute;
-  left: var(--x);
-  top: var(--y);
-  transform: translate(-50%, -50%);
+.me-info {
   display: grid;
-  justify-items: center;
-  gap: 0;
-  pointer-events: auto;
-  transition: opacity var(--t-fade) var(--ease);
+  justify-items: start;
+  align-content: end;
+  gap: 7px;
+  width: 230px;
+  min-width: 0;
 }
 
-.seat .hand-box {
-  margin-bottom: -10px;
-  z-index: 0;
-}
-
-.seat-plate {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  justify-items: center;
-  gap: 2px;
-  min-width: 124px;
-  max-width: 160px;
-  padding: 6px 12px 8px;
-  background: rgba(8, 12, 10, 0.88);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-2);
-  transition:
-    box-shadow var(--t-fade) var(--ease),
-    border-color var(--t-fade) var(--ease);
-}
-
-.seat.is-turn .seat-plate {
-  border-color: var(--accent);
-  box-shadow:
-    0 0 0 1px var(--accent),
-    0 0 26px rgba(245, 185, 66, 0.3);
-}
-
-.seat.winner .seat-plate {
-  border-color: var(--win);
-  box-shadow: 0 0 22px rgba(34, 197, 94, 0.35);
-}
-
-/* Folded players dim, and their cards are pulled away. */
-.seat.folded .hand {
-  opacity: 0.25;
-  transform: translateY(10px) scale(0.92);
-  transition:
-    opacity var(--t-fade) var(--ease),
-    transform var(--t-fade) var(--ease);
-}
-
-.seat.folded .seat-plate,
-.seat.away .seat-plate,
-.seat.idle .seat-plate {
-  opacity: 0.6;
-}
-
-.seat-head {
+.me-head {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 7px;
   max-width: 100%;
-  min-height: 22px;
-  font-size: 13px;
-  font-weight: 600;
+  min-height: 34px;
+  font-size: 18px;
+  font-weight: 700;
 }
 
-.seat-name {
+.me-head .name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.seat-sub {
+.hand-ring {
+  width: 34px;
+  height: 34px;
+}
+
+.hand-ring .ring-num {
+  font-size: 13px;
+}
+
+.me-chips {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
   gap: 4px 8px;
-  font-size: 12px;
-}
-
-.seat-chips {
-  color: var(--text-muted);
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 
-.seat-chips::before {
-  content: '';
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-right: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-  opacity: 0.7;
-  vertical-align: 1px;
+.me-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 24px;
 }
 
-.seat-action {
-  font-size: 11px;
+.my-hand-name {
+  font-size: var(--fs-md);
   font-weight: 700;
-  color: var(--text);
-  white-space: nowrap;
-}
-
-.act-fold,
-.muted-action {
-  color: var(--text-faint);
-}
-
-.act-check {
-  color: #cbd5e1;
-}
-
-.act-call {
-  color: #93c5fd;
-}
-
-.act-raise {
   color: var(--accent);
 }
 
-.act-allin {
-  padding: 1px 6px;
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-radius: var(--r-xs);
-}
-
-.hand-label {
-  color: var(--accent);
-}
-
-.seat-kick {
-  position: absolute;
-  top: -10px;
-  right: -10px;
-  z-index: 3;
-  width: 24px;
-  height: 24px;
-  background: var(--surface-2);
-  border-color: var(--line-strong);
-  opacity: 0;
-}
-
-.seat-kick svg.icon {
-  width: 14px;
-  height: 14px;
-}
-
-.seat:hover .seat-kick,
-.seat-kick:focus-visible {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .seat-kick {
-    opacity: 0.7;
-  }
-}
-
-/* ---------------------------------------------------------------- my spot */
-
-.my-spot {
-  position: absolute;
-  left: 50%;
-  bottom: 2%;
-  transform: translateX(-50%);
-  z-index: 2;
-  display: grid;
-  justify-items: center;
-  gap: 6px;
-  width: max-content;
-  max-width: 100%;
-}
-
-.my-bet {
-  position: absolute;
-  left: calc(100% + 18px);
-  top: 50%;
-  transform: translateY(-50%);
-  animation: chip-in 280ms var(--ease) both;
+.my-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
 }
 
 .my-spot .hand-box {
+  --cw: clamp(76px, 12.5vh, 100px);
+  --overlap: 0.18;
   min-height: calc(var(--cw) * 1.4);
-  min-width: calc(var(--cw) * 1.8);
+  min-width: calc(var(--cw) * 1.82);
 }
 
 /* My turn: an outlined, softly lit area around my cards. */
-.my-spot.is-turn .hand-box::before {
+.my-spot.is-turn .hand-box::before,
+.my-spot.winner .hand-box::before {
   content: '';
   position: absolute;
-  inset: -10px -12px;
+  inset: -8px -10px;
   z-index: -1;
   border-radius: 16px;
+  animation: fade-in var(--t-fade) var(--ease);
+}
+
+.my-spot.is-turn .hand-box::before {
   background: var(--accent-soft);
   box-shadow:
     inset 0 0 0 2px var(--accent),
     0 0 28px rgba(245, 185, 66, 0.22);
-  animation: fade-in var(--t-fade) var(--ease);
 }
 
 .my-spot.winner .hand-box::before {
-  content: '';
-  position: absolute;
-  inset: -10px -12px;
-  z-index: -1;
-  border-radius: 16px;
   box-shadow:
     inset 0 0 0 2px var(--win),
     0 0 28px rgba(34, 197, 94, 0.3);
@@ -767,37 +850,6 @@
 .my-spot.folded .hand {
   opacity: 0.4;
   transform: translateY(8px);
-}
-
-.my-hand-name {
-  min-height: 22px;
-  font-size: var(--fs-md);
-  font-weight: 700;
-  color: var(--accent);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-}
-
-.my-name {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-}
-
-.my-name .name {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.my-tools {
-  display: inline-flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: 4px 10px;
 }
 
 .toggle-btn {
@@ -848,15 +900,6 @@
   transform: translateX(10px);
 }
 
-.spot-note {
-  max-width: 320px;
-  padding: 10px 16px;
-  font-size: var(--fs-sm);
-  text-align: center;
-  color: var(--text-muted);
-  background: rgba(6, 10, 8, 0.45);
-  border-radius: var(--r-md);
-}
 
 /* Chips borrowed from the bank. */
 .owes {
@@ -929,49 +972,42 @@
   }
 }
 
-/* ---------------------------------------------------------- medium screens */
 
-@media (max-width: 1100px) and (min-width: 701px) {
-  .board {
-    --cw: 58px;
-  }
-
-  .hand-box.size-lg {
-    --cw: 80px;
-  }
-
-  .hand-box.size-sm {
-    --cw: 38px;
-  }
-
-  .seat-plate {
-    min-width: 108px;
-    padding: 5px 8px 7px;
-  }
-}
-
-/* Short desktop windows: shrink the cards before anything overlaps. */
-@media (max-height: 900px) and (min-width: 701px) {
-  .hand-box.size-lg {
-    --cw: 80px;
-  }
-}
+/* --------------------------------------------------------- short windows */
 
 @media (max-height: 760px) and (min-width: 701px) {
-  .board {
-    --cw: 54px;
+  .table-screen {
+    --seat-cw: 34px;
+    gap: 8px;
+    padding-bottom: 10px;
   }
 
-  .hand-box.size-lg {
-    --cw: 70px;
+  .table-bar {
+    height: 48px;
   }
 
-  .hand-box.size-sm {
-    --cw: 36px;
+  .plate-box {
+    gap: 2px;
+    padding: 5px 8px 7px;
   }
 
   .center {
     gap: 6px;
+    padding-bottom: 10px;
+  }
+
+  .me-info {
+    gap: 4px;
+  }
+
+  .me-head {
+    min-height: 30px;
+    font-size: 16px;
+  }
+
+  .hand-ring {
+    width: 30px;
+    height: 30px;
   }
 
   .my-tools .toggle-btn {
@@ -979,10 +1015,36 @@
   }
 }
 
+@media (max-width: 1100px) and (min-width: 701px) {
+  .me-info {
+    width: 200px;
+  }
+
+  .plate-box {
+    padding-inline: 6px;
+  }
+
+  .act-pill {
+    padding: 0 7px;
+    letter-spacing: 0.03em;
+  }
+
+  .plate-ring {
+    width: 20px;
+    height: 20px;
+  }
+
+  .plate-head,
+  .plate-chips {
+    font-size: 14px;
+  }
+}
+
 /* ------------------------------------------------------------------ phones */
 
 @media (max-width: 700px) {
   .table-screen {
+    gap: 8px;
     padding: 0 10px 10px;
   }
 
@@ -990,161 +1052,104 @@
     height: 48px;
   }
 
-  .felt-wrap {
-    padding: 8px 6px 10px;
-  }
-
-  /* The oval becomes a rounded panel: other players in rows on top, the board, then my seat. */
-  .felt {
-    display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
-    align-content: start;
-    gap: 10px;
-    padding: 10px 10px 12px;
-    border-radius: 28px;
-    overflow-y: auto;
-    box-shadow:
-      inset 0 0 0 1px rgba(255, 255, 255, 0.05),
-      inset 0 0 40px rgba(0, 0, 0, 0.4),
-      0 0 0 6px var(--rail),
-      0 0 0 8px #3b2414,
-      var(--shadow-2);
-  }
-
-  .felt::before {
-    display: none;
-  }
-
-  .others {
-    position: static;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* Compact plates in a grid: name, action and chips only. */
+  .opponents {
+    grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+    justify-content: stretch;
     gap: 6px;
-    pointer-events: auto;
+    margin-top: -4px;
   }
 
-  .table-bet,
-  .dealer-btn {
+  .plate .hand-box,
+  .bets,
+  .plate-ring {
     display: none;
   }
 
-  .seat {
-    position: relative;
-    left: auto;
-    top: auto;
-    transform: none;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: center;
-    justify-items: stretch;
-    gap: 6px;
-    padding: 5px 6px;
-    background: rgba(6, 10, 8, 0.4);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-  }
-
-  .seat.is-turn {
-    border-color: var(--accent);
-    background: rgba(245, 185, 66, 0.1);
-  }
-
-  .seat.winner {
-    border-color: var(--win);
-  }
-
-  .seat .hand-box {
-    margin: 0;
-  }
-
-  .seat .hand-box.size-sm {
-    --cw: 22px;
-    --overlap: 0.2;
-  }
-
-  .seat .hand-box.empty {
-    min-width: 22px;
-  }
-
-  .seat .card .c-pip,
-  .seat .card .c-br {
-    display: none;
-  }
-
-  .seat .card .c-corner {
-    inset: 0;
-    justify-content: center;
-  }
-
-  .seat .card .c-corner b {
-    font-size: 11px;
-    letter-spacing: -0.08em;
-  }
-
-  .seat .card .c-corner i {
-    font-size: 9px;
-  }
-
-  .seat-plate {
-    min-width: 0;
-    max-width: none;
-    justify-items: start;
-    padding: 0;
-    background: none;
-    border: 0;
+  .plate-box {
+    gap: 2px;
+    padding: 5px 6px 7px;
+    border-radius: var(--r-sm);
     box-shadow: none;
   }
 
-  .seat.is-turn .seat-plate,
-  .seat.winner .seat-plate {
-    box-shadow: none;
-  }
-
-  .seat .dealer-tag {
-    display: inline-grid;
-  }
-
-  .seat-head {
-    font-size: 12px;
+  .plate-head {
     min-height: 20px;
+    font-size: 13px;
   }
 
-  .seat-sub {
-    justify-content: flex-start;
-    gap: 2px 6px;
+  .act-pill {
+    height: 18px;
+    padding: 0 7px;
+    font-size: 10px;
+    line-height: 18px;
+    letter-spacing: 0.04em;
+  }
+
+  .act-pill.hand {
     font-size: 11px;
   }
 
-  .inline-bet {
+  /* No empty line on a phone: the grid rows keep the plates the same height anyway. */
+  .act-pill.blank {
+    display: none;
+  }
+
+  .plate-chips {
+    font-size: 12px;
+    gap: 2px 6px;
+  }
+
+  .plate-chips::before {
+    width: 6px;
+    height: 6px;
+  }
+
+  .plate .inline-bet {
     display: inline-flex;
-    height: 22px;
+    height: 20px;
     gap: 4px;
     padding: 0 7px 0 3px;
     font-size: 11px;
   }
 
   .inline-bet .chip-disc {
-    width: 15px;
-    height: 15px;
+    width: 14px;
+    height: 14px;
     border-width: 2px;
   }
 
   .timer-bar {
-    left: 0;
-    right: 0;
-    bottom: -4px;
+    left: 4px;
+    right: 4px;
+    bottom: 2px;
   }
 
-  .seat-kick {
-    top: -8px;
-    right: -8px;
+  .plate-kick {
+    top: -7px;
+    right: -7px;
     width: 22px;
     height: 22px;
   }
 
+  .felt-wrap {
+    padding: 0 5px;
+  }
+
+  .felt {
+    grid-template-rows: minmax(0, 1fr);
+    border-radius: 22px;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+      inset 0 0 40px rgba(0, 0, 0, 0.4),
+      0 0 0 4px var(--rail),
+      0 0 0 5px #3b2414,
+      var(--shadow-2);
+  }
+
   .center {
-    position: static;
-    transform: none;
     gap: 6px;
+    padding: 10px 8px;
   }
 
   .deck {
@@ -1152,7 +1157,7 @@
   }
 
   .board {
-    --cw: 52px;
+    --cw: min(60px, calc((100vw - 70px) / 5));
   }
 
   .board .hand {
@@ -1168,32 +1173,72 @@
     letter-spacing: 0.12em;
   }
 
+  .my-bet-slot {
+    right: 12px;
+    bottom: 8px;
+  }
+
+  .my-bet-slot .chip-stack {
+    height: 24px;
+    font-size: 12px;
+  }
+
+  /* My seat on top, the controls under it, nearest the thumb. */
+  .dock {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'me'
+      'controls';
+    gap: 8px;
+  }
+
   .my-spot {
-    position: static;
-    transform: none;
-    align-self: end;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .me-info {
+    flex: 1;
     width: auto;
     gap: 4px;
   }
 
-  .hand-box.size-lg {
-    --cw: 80px;
+  .me-head {
+    min-height: 28px;
+    font-size: 16px;
   }
 
   .hand-ring {
-    left: -50px;
-    width: 40px;
-    height: 40px;
+    width: 30px;
+    height: 30px;
   }
+
+  .hand-ring .ring-num {
+    font-size: 12px;
+  }
+
+  .me-chips {
+    font-size: 13px;
+  }
+
+  .my-hand-name {
+    font-size: 15px;
+  }
+
+  .my-spot .hand-box {
+    --cw: 78px;
+    margin: 0 4px 4px 0;
+  }
+
 }
 
 /* Short phones: keep my cards large but leave room for the controls. */
 @media (max-width: 700px) and (max-height: 760px) {
-  .hand-box.size-lg {
+  .my-spot .hand-box {
     --cw: 66px;
   }
 
   .board {
-    --cw: 46px;
+    --cw: min(48px, calc((100vw - 70px) / 5));
   }
 }

@@ -1,47 +1,76 @@
-/* The action bar under the felt: amount box, slider and presets, then Fold, Check or Call, and Bet or Raise. */
+/* The left of the dock: the pot total and the amount box, slider and presets on one line, and
+   Fold, Check or Call, and Bet or Raise along the very bottom. */
 
 .table-controls {
+  grid-area: controls;
+  min-width: 0;
   display: grid;
-  justify-items: center;
-  gap: 10px;
-  padding-top: 12px;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    'pot sizing'
+    'acts acts';
+  align-items: center;
+  gap: 10px 16px;
 }
 
-.table-controls:not(:has(> :not([hidden]))) {
-  padding-top: 0;
+.pot-total {
+  grid-area: pot;
+  justify-self: start;
+  align-self: start;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 16px;
+  white-space: nowrap;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.pot-total-label {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+#pot-total {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.2;
 }
 
 .watch-note {
+  grid-area: acts;
   margin: 0;
   font-size: var(--fs-sm);
   color: var(--text-muted);
-  text-align: center;
 }
 
 /* ----------------------------------------------------------------- actions */
 
+/* Its two parts take their own places in the dock grid. */
 .action-bar {
-  width: min(860px, 100%);
-  display: grid;
-  gap: 10px;
-  padding: 12px 14px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-2);
-  animation: rise-in var(--t-fade) var(--ease);
+  display: contents;
 }
 
 .sizing {
+  grid-area: sizing;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  justify-content: flex-end;
+  gap: 8px 12px;
+  animation: rise-in var(--t-fade) var(--ease);
 }
 
 .amount-field {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
+  margin: 0;
 }
 
 .amount-caption {
@@ -52,48 +81,120 @@
   color: var(--text-muted);
 }
 
-.amount-input {
-  width: 112px;
-  height: 40px;
-  padding: 0 10px;
-  font-size: 18px;
-  font-weight: 700;
+/* The amount is plain text: it is set with the slider, − and +, or All in. A minimum width keeps the
+   slider from shifting as the number grows. */
+.amount-value {
+  min-width: 4.5ch;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 40px;
   color: var(--text);
-  background: var(--field);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-sm);
+  white-space: nowrap;
 }
 
-.amount-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+.amount-value.off {
+  color: var(--text-faint);
 }
 
-.amount-input:disabled {
-  opacity: 0.4;
+.stepper {
+  flex: 1 1 170px;
+  min-width: 150px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
+.step-btn {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* The slider moves only when its handle is dragged: the input and its track ignore the pointer
+   (so a click or tap on the track does nothing) and only the handle takes it. */
 .amount-slider {
   flex: 1;
-  min-width: 80px;
-  accent-color: var(--accent);
+  min-width: 60px;
   height: 28px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: none;
+  touch-action: pan-y;
+}
+
+.amount-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  background: var(--line-strong);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.amount-slider::-moz-range-track {
+  height: 6px;
+  background: var(--line-strong);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.amount-slider::-moz-range-progress {
+  height: 6px;
+  background: var(--accent);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.amount-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  margin-top: -11px; /* centre the 28px handle on the 6px track */
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  box-shadow: var(--shadow-2);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.amount-slider::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  box-shadow: var(--shadow-2);
+  cursor: grab;
+  pointer-events: auto;
 }
 
 .amount-slider:disabled {
   opacity: 0.35;
 }
 
-.presets {
-  display: flex;
-  gap: 6px;
+.amount-slider:disabled::-webkit-slider-thumb {
+  cursor: default;
+  pointer-events: none;
 }
 
-.preset {
-  height: 36px;
-  padding: 0 10px;
-  font-size: 13px;
-  font-weight: 600;
+.amount-slider:disabled::-moz-range-thumb {
+  cursor: default;
+  pointer-events: none;
+}
+
+.allin-btn {
+  flex: none;
+  height: 40px;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -106,14 +207,16 @@
 }
 
 .act-row {
+  grid-area: acts;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
+  animation: rise-in var(--t-fade) var(--ease);
 }
 
 .action-btn {
   --c: var(--hit);
-  height: 60px;
+  height: 58px;
   gap: 10px;
   font-size: 18px;
   font-weight: 700;
@@ -128,10 +231,6 @@
   width: 22px;
   height: 22px;
   color: var(--c);
-}
-
-.action-btn kbd {
-  margin-left: 2px;
 }
 
 .act-fold {
@@ -164,11 +263,6 @@
   filter: saturate(0.2);
 }
 
-.key-pressed {
-  transform: scale(0.96) !important;
-  filter: brightness(1.25);
-}
-
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -176,55 +270,65 @@
   }
 }
 
-/* ------------------------------------------------------------------ phones */
+/* ---------------------------------------------------------- short windows */
 
-@media (max-width: 860px) {
-  .sizing {
-    flex-wrap: wrap;
-    gap: 8px 12px;
+@media (max-height: 760px) and (min-width: 701px) {
+  .table-controls {
+    gap: 8px 14px;
   }
 
-  .presets {
-    flex: 1 0 100%;
+  .action-btn {
+    height: 50px;
   }
 
-  .preset {
-    flex: 1;
-    padding: 0 4px;
-  }
-
-  /* The confirm question is long, so it gets the whole row. */
-  .allin-btn.armed {
-    flex: 3;
+  #pot-total {
+    font-size: 21px;
   }
 }
 
+/* ------------------------------------------------------------------ phones */
+
 @media (max-width: 700px) {
   .table-controls {
-    padding-top: 10px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'pot'
+      'sizing'
+      'acts';
     gap: 8px;
   }
 
-  .action-bar {
+  .pot-total {
+    padding: 3px 12px;
+  }
+
+  #pot-total {
+    font-size: 18px;
+  }
+
+  .pot-total-label {
+    font-size: 11px;
+  }
+
+  .sizing {
     gap: 8px;
-    padding: 10px;
   }
 
   .amount-caption {
     display: none;
   }
 
-  .amount-input {
-    width: 96px;
+  .amount-value {
+    font-size: 22px;
+  }
+
+  /* The confirm question is long, so it gets a row of its own. */
+  .allin-btn.armed {
+    flex: 1 0 100%;
   }
 
   .act-row {
     gap: 6px;
-  }
-
-  /* A phone has no keyboard for the shortcuts. */
-  .action-btn kbd {
-    display: none;
   }
 
   .action-btn {

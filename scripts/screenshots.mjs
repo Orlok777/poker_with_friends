@@ -125,6 +125,19 @@ async function run(browser, label, vp) {
     await sleep(750); // let animations finish
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     if (overflow > 0) console.warn(`  ! ${label}/${name}: page is ${overflow}px wider than the viewport`);
+    // The table screen must fit the window: no page scroll, and nothing spilling out of the felt.
+    const tall = await page.evaluate(() => {
+      const table = document.getElementById('screen-table');
+      if (!table || table.hidden) return [];
+      const out = [];
+      const page = document.documentElement.scrollHeight - window.innerHeight;
+      if (page > 0) out.push(`page is ${page}px taller than the viewport`);
+      const felt = document.getElementById('felt');
+      const spill = felt ? felt.scrollHeight - felt.clientHeight : 0;
+      if (spill > 0) out.push(`the felt content is ${spill}px taller than the felt`);
+      return out;
+    });
+    for (const t of tall) console.warn(`  ! ${label}/${name}: ${t}`);
     await page.screenshot({ path: join(OUT, `${label}-${name}.png`) });
     console.log(`  ${label}-${name}.png`);
   };
@@ -185,9 +198,9 @@ async function run(browser, label, vp) {
     for (const b of bots) b.setAuto(false);
     await shot('3-preflop-my-turn');
 
-    // Maya raises half the pot with the keyboard, then a bot thinks about it.
-    await page.click('[data-preset="0.5"]');
-    await page.keyboard.press('r');
+    // Maya raises a few small blinds with the + button, then a bot thinks about it.
+    for (let i = 0; i < 3; i++) await page.click('#amount-up');
+    await page.click('#raise-btn');
     await alex.waitFor((s) => !mayasTurn(s) && s.turn !== null, 'next player');
     await sleep(1500); // the countdown visibly runs
     await shot('4-other-turn');
@@ -201,7 +214,7 @@ async function run(browser, label, vp) {
     while (true) {
       const s = await alex.waitFor((st) => mayasTurn(st) || st.phase === 'showdown' || st.phase === 'hand_over', 'Maya or showdown');
       if (!mayasTurn(s)) break;
-      await page.keyboard.press('c');
+      await page.click('#call-btn');
       await alex.waitFor((st) => !mayasTurn(st), 'Maya checked');
     }
     await alex.waitFor((s) => s.phase === 'showdown' && s.potsAwarded === 0, 'showdown');

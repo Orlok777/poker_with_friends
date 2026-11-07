@@ -1,6 +1,7 @@
-// The felt: board and pots in the middle, the other seats round the oval, my seat at the bottom.
+// The table screen: the other players' nameplates along the top, the felt with the board and pots in the
+// middle, and my seat in the dock at the bottom.
 
-import { type PlayerView, type PublicSettings, type TableState } from '../shared/types.js';
+import { isHiddenCard, type PlayerView, type PublicSettings, type TableState } from '../shared/types.js';
 import { app, confirmKick, isHost, resetChips, send, serverNow } from './app.js';
 import { openBorrowPrompt } from './borrow.js';
 import { cardKey, chipStack, flyChips, handEl, resetCardMemory, ringEl, runCardAnimations, tickRings } from './cards.js';
@@ -84,20 +85,7 @@ function pillText(s: TableState, self: PlayerView): { text: string; tone: '' | '
   return { text: '', tone: '' };
 }
 
-// ----------------------------------------------------------------- layout
-
-/** Where seats sit on the oval, in % of the felt. My seat is at the bottom centre. */
-function seatPosition(seat: number, mySeat: number | null, count: number): { x: number; y: number } {
-  // Watching: nobody sits at the bottom, so the seats are turned half a step.
-  const rel = mySeat === null ? seat + 0.5 : (seat - mySeat + count) % count;
-  const angle = Math.PI / 2 + (rel * 2 * Math.PI) / count;
-  return { x: 50 + 43 * Math.cos(angle), y: 47 + 36 * Math.sin(angle) };
-}
-
-const CENTER = { x: 50, y: 47 };
-const lerp = (a: { x: number; y: number }, t: number) => ({ x: a.x + (CENTER.x - a.x) * t, y: a.y + (CENTER.y - a.y) * t });
-
-// ------------------------------------------------------------------- seats
+// ------------------------------------------------------------------- plates
 
 function winningKeys(s: TableState): Set<string> {
   const r = s.result;
@@ -114,89 +102,118 @@ function markWinners(row: HTMLElement, keys: Set<string>): void {
   }
 }
 
-function blindTag(s: TableState, p: PlayerView): HTMLElement | null {
-  if (!p.inHand || p.seat === null) return null;
-  if (p.seat === s.smallBlindSeat) return h('span', 'blind-tag', 'SB');
-  if (p.seat === s.bigBlindSeat) return h('span', 'blind-tag', 'BB');
-  return null;
+/** The white "D" on the button seat and the "SB" / "BB" tags on the blinds. */
+function seatTags(s: TableState, p: PlayerView): HTMLElement[] {
+  if (!p.inHand || p.seat === null) return [];
+  const tags: HTMLElement[] = [];
+  if (p.seat === s.buttonSeat) {
+    const d = h('span', 'dealer-tag', 'D');
+    d.title = 'Dealer button';
+    tags.push(d);
+  }
+  if (p.seat === s.smallBlindSeat) tags.push(h('span', 'blind-tag', 'SB'));
+  else if (p.seat === s.bigBlindSeat) tags.push(h('span', 'blind-tag', 'BB'));
+  return tags;
 }
 
 function statusText(s: TableState, p: PlayerView): string | null {
-  if (!p.connected) return 'Away';
+  if (!p.connected) return 'Disconnected';
   if (p.sittingOut && !p.inHand) return 'Sitting out';
   if (p.chips === 0 && !p.inHand) return 'Out of chips';
   if (!p.inHand && s.phase !== 'waiting') return 'Next hand';
   return null;
 }
 
-function seatEl(s: TableState, p: PlayerView, counts: Counts, win: Set<string>): HTMLElement {
-  const seat = h('div', 'seat');
-  seat.dataset.id = p.id;
-  if (s.turn === p.id) seat.classList.add('is-turn');
-  if (p.folded) seat.classList.add('folded');
-  if (!p.connected) seat.classList.add('away');
-  if (!p.inHand) seat.classList.add('idle');
-  const won = s.result && s.potsAwarded > 0 && s.result.pots.slice(0, s.potsAwarded).some((pot) => pot.winners.includes(p.id));
-  if (won) seat.classList.add('winner');
+/** "Fold" -> "Folded", "Call 20" -> "Called 20", "Raise to 60" -> "Raised to 60". */
+function pastTense(action: string): string {
+  if (action === 'Fold') return 'Folded';
+  if (action === 'Check') return 'Checked';
+  if (action.startsWith('Call ')) return `Called ${action.slice(5)}`;
+  if (action.startsWith('Raise to ')) return `Raised to ${action.slice(9)}`;
+  return action;
+}
 
-  const box = h('div', 'hand-box size-sm');
-  const { el, added, flipped } = handEl(`seat:${p.id}`, p.cards, !firstRender);
-  counts.added += added;
-  counts.flipped += flipped;
-  markWinners(el, win);
-  box.append(el);
-  if (p.cards.length === 0) box.classList.add('empty');
-  seat.append(box);
-
-  const plate = h('div', 'seat-plate');
-  const head = h('div', 'seat-head');
-  if (s.turn === p.id && s.deadline !== null) head.append(ringEl('seat-ring'));
-  head.append(h('span', 'seat-name', p.name));
-  if (p.seat !== null && p.seat === s.buttonSeat) head.append(h('span', 'dealer-tag', 'D'));
-  const blind = blindTag(s, p);
-  if (blind) head.append(blind);
-  if (p.id === s.hostId) head.title = `${p.name} is the host`;
-  plate.append(head);
-
-  const sub = h('div', 'seat-sub');
-  sub.append(h('span', 'seat-chips num', fmt(p.chips)));
+/** The pill under a name: the hand at showdown, else the last action, else why they are not playing. */
+function actionPill(s: TableState, p: PlayerView): HTMLElement {
   const status = statusText(s, p);
-  if (p.handName) sub.append(h('span', 'seat-action hand-label', p.handName));
-  else if (p.lastAction) sub.append(h('span', `seat-action ${actionClass(p.lastAction)}`, p.lastAction));
-  else if (status) sub.append(h('span', 'seat-action muted-action', status));
-  if (p.debt > 0) sub.append(h('span', 'owes num', `owes ${fmt(p.debt)}`));
-  plate.append(sub);
-  // The bet sits inside the seat on phones; on wider screens it is drawn toward the middle instead.
+  if (p.handName) return h('span', 'act-pill hand', p.handName);
+  if (!p.connected) return h('span', 'act-pill muted', 'Disconnected');
+  if (p.lastAction) {
+    const tone = p.lastAction === 'Fold' ? 'muted' : p.lastAction === 'All in' ? 'strong' : 'amber';
+    return h('span', `act-pill ${tone}`, pastTense(p.lastAction));
+  }
+  if (status) return h('span', 'act-pill muted', status);
+  // An empty pill keeps every plate the same height.
+  const blank = h('span', 'act-pill blank', ' ');
+  blank.setAttribute('aria-hidden', 'true');
+  return blank;
+}
+
+function hasWon(s: TableState, id: string): boolean {
+  return !!s.result && s.potsAwarded > 0 && s.result.pots.slice(0, s.potsAwarded).some((pot) => pot.winners.includes(id));
+}
+
+/** One nameplate in the top strip: name, tags and timer, the action pill, chips, and the cards under it. */
+function plateEl(s: TableState, p: PlayerView, counts: Counts, win: Set<string>): HTMLElement {
+  const plate = h('div', 'plate');
+  plate.dataset.id = p.id;
+  const turn = s.turn === p.id;
+  if (turn) plate.classList.add('is-turn');
+  if (p.folded) plate.classList.add('folded');
+  if (!p.connected) plate.classList.add('away');
+  if (!p.inHand) plate.classList.add('idle');
+  if (hasWon(s, p.id)) plate.classList.add('winner');
+
+  const box = h('div', 'plate-box');
+  const head = h('div', 'plate-head');
+  if (turn && s.deadline !== null) head.append(ringEl('plate-ring'));
+  head.append(h('span', 'plate-name', p.name), ...seatTags(s, p));
+  if (p.id === s.hostId) head.title = `${p.name} is the host`;
+  box.append(head, actionPill(s, p));
+
+  const chips = h('div', 'plate-chips');
+  chips.append(h('span', 'num', fmt(p.chips)));
+  if (p.debt > 0) chips.append(h('span', 'owes num', `owes ${fmt(p.debt)}`));
+  // Phones have no bets row, so the chips in front sit on the plate there.
   if (p.bet > 0) {
     const inline = chipStack(p.bet);
     inline.classList.add('inline-bet');
-    plate.append(inline);
+    chips.append(inline);
   }
-  if (s.turn === p.id && s.deadline !== null) {
+  box.append(chips);
+
+  if (turn && s.deadline !== null) {
     const bar = h('span', 'timer-bar');
     bar.dataset.timerBar = '';
-    plate.append(bar);
+    box.append(bar);
   }
-  seat.append(plate);
-
   if (isHost()) {
-    const kick = h('button', 'icon-btn seat-kick');
+    const kick = h('button', 'icon-btn plate-kick');
     kick.type = 'button';
     kick.title = `Kick ${p.name}`;
     kick.setAttribute('aria-label', `Kick ${p.name}`);
     kick.append(icon('close'));
     kick.addEventListener('click', () => confirmKick(p));
-    seat.append(kick);
+    box.append(kick);
   }
-  return seat;
+  plate.append(box);
+
+  const hand = h('div', 'hand-box size-sm');
+  const { el, added, flipped } = handEl(`seat:${p.id}`, p.cards, !firstRender);
+  counts.added += added;
+  counts.flipped += flipped;
+  markWinners(el, win);
+  hand.append(el);
+  if (p.cards.length === 0) hand.classList.add('empty');
+  else if (p.cards.some((c) => !isHiddenCard(c))) hand.classList.add('face-up');
+  plate.append(hand);
+  return plate;
 }
 
 function actionClass(text: string): string {
-  if (text === 'Fold') return 'act-fold';
-  if (text === 'All in') return 'act-allin';
-  if (text === 'Check') return 'act-check';
-  if (text.startsWith('Call')) return 'act-call';
-  return 'act-raise';
+  if (text === 'Fold') return 'muted';
+  if (text === 'All in') return 'strong';
+  return 'amber';
 }
 
 interface Counts {
@@ -204,45 +221,37 @@ interface Counts {
   flipped: number;
 }
 
-function renderOthers(s: TableState, self: PlayerView, counts: Counts, win: Set<string>): void {
-  const box = $('others');
+/** Everyone but me, in seat order starting from my left (from seat 0 while watching). */
+function opponents(s: TableState, self: PlayerView): PlayerView[] {
   const n = s.seats.length;
-  const nodes: HTMLElement[] = [];
-  for (let seat = 0; seat < n; seat++) {
-    const id = s.seats[seat];
-    const p = id && id !== self.id ? s.players.find((x) => x.id === id) : undefined;
-    if (!p) continue;
-    const pos = seatPosition(seat, self.seat, n);
-    const el = seatEl(s, p, counts, win);
-    el.style.setProperty('--x', `${pos.x}%`);
-    el.style.setProperty('--y', `${pos.y}%`);
-    nodes.push(el);
-    // Chips in front of the player, between the seat and the middle.
-    if (p.bet > 0) {
-      const at = lerp(pos, 0.36);
-      const bet = chipStack(p.bet);
-      bet.classList.add('table-bet');
-      bet.dataset.id = p.id;
-      bet.style.setProperty('--x', `${at.x}%`);
-      bet.style.setProperty('--y', `${at.y}%`);
-      nodes.push(bet);
-    }
-    if (seat === s.buttonSeat && p.inHand) nodes.push(dealerButton(pos));
+  const start = self.seat === null ? 0 : self.seat + 1;
+  const out: PlayerView[] = [];
+  for (let k = 0; k < n; k++) {
+    const id = s.seats[(start + k) % n];
+    if (!id || id === self.id) continue;
+    const p = s.players.find((x) => x.id === id);
+    if (p) out.push(p);
   }
-  if (self.seat !== null && self.seat === s.buttonSeat && self.inHand) {
-    nodes.push(dealerButton(seatPosition(self.seat, self.seat, n), true));
-  }
-  box.replaceChildren(...nodes);
+  return out;
 }
 
-/** The white "D" next to the button seat, a little toward the middle. */
-function dealerButton(pos: { x: number; y: number }, mine = false): HTMLElement {
-  const at = lerp(pos, mine ? 0.3 : 0.24);
-  const btn = h('span', mine ? 'dealer-btn mine' : 'dealer-btn', 'D');
-  btn.title = 'Dealer button';
-  btn.style.setProperty('--x', `${at.x + (mine ? 13 : 6)}%`);
-  btn.style.setProperty('--y', `${at.y}%`);
-  return btn;
+/** The nameplates along the top, and under each, in the felt, the chips that player has in front. */
+function renderOpponents(s: TableState, self: PlayerView, counts: Counts, win: Set<string>): void {
+  const list = opponents(s, self);
+  $('screen-table').style.setProperty('--n', String(Math.max(1, list.length)));
+  $('opponents').replaceChildren(...list.map((p) => plateEl(s, p, counts, win)));
+  $('bets').replaceChildren(
+    ...list.map((p) => {
+      const cell = h('div', 'bet-cell');
+      if (p.bet > 0) {
+        const st = chipStack(p.bet);
+        st.classList.add('table-bet');
+        st.dataset.id = p.id;
+        cell.append(st);
+      }
+      return cell;
+    }),
+  );
 }
 
 // ------------------------------------------------------------------ middle
@@ -267,6 +276,10 @@ function renderCenter(s: TableState, self: PlayerView, counts: Counts, win: Set<
     return st;
   });
   pots.replaceChildren(...nodes);
+
+  // The total in the dock: every pot plus everything in front of the players.
+  const total = s.pots.reduce((sum, p) => sum + p.amount, 0) + s.players.reduce((sum, p) => sum + p.bet, 0);
+  $('pot-total').textContent = fmt(total);
 
   const pill = $('phase-pill');
   const phase = pillText(s, self);
@@ -294,57 +307,53 @@ function toolButton(label: string, title: string, onClick: () => void, cls = 'li
   return b;
 }
 
+/** My seat in the dock: name, chips, earnings, hand strength and Sit out beside my two large cards. */
 function renderMe(s: TableState, self: PlayerView, counts: Counts, win: Set<string>): void {
   const spot = $('my-spot');
-  spot.classList.toggle('is-turn', s.turn === self.id);
+  const turn = s.turn === self.id;
+  spot.classList.toggle('is-turn', turn);
   spot.classList.toggle('folded', self.folded);
-  if (self.seat === null) {
-    spot.replaceChildren(h('p', 'spot-note', "You're watching. You'll get a seat as soon as one frees up."));
-    return;
-  }
-  const nodes: HTMLElement[] = [];
+  spot.classList.toggle('winner', hasWon(s, self.id));
 
-  const box = h('div', 'hand-box size-lg');
-  box.dataset.id = self.id;
-  const mine = s.you?.cards ?? [];
-  const { el, added } = handEl('me', mine, !firstRender);
-  counts.added += added;
-  markWinners(el, win);
-  box.append(el);
-  if (mine.length === 0) box.classList.add('empty');
-  if (s.turn === self.id && s.deadline !== null) box.append(ringEl('hand-ring'));
-  // My chips in front of me sit beside my cards, toward the middle.
+  // My chips in front of me sit on the felt, above my cards.
+  const myBet = $('my-bet');
   if (self.bet > 0) {
     const st = chipStack(self.bet);
-    st.classList.add('my-bet');
-    box.append(st);
-  }
-  nodes.push(box);
+    st.classList.add('table-bet', 'my-bet');
+    myBet.replaceChildren(st);
+  } else myBet.replaceChildren();
 
-  const won = s.result && s.potsAwarded > 0 && s.result.pots.slice(0, s.potsAwarded).some((pot) => pot.winners.includes(self.id));
-  spot.classList.toggle('winner', !!won);
+  if (self.seat === null) {
+    // The note in the controls says I am watching.
+    spot.replaceChildren();
+    return;
+  }
+
+  const info = h('div', 'me-info');
+  const head = h('div', 'me-head');
+  if (turn && s.deadline !== null) head.append(ringEl('hand-ring'));
+  head.append(h('span', 'name', self.name), ...seatTags(s, self));
+  info.append(head);
+
+  const chips = h('div', 'me-chips');
+  chips.append(h('span', 'num', `${fmt(self.chips)} chips`));
+  if (self.debt > 0) chips.append(h('span', 'owes num', `owes ${fmt(self.debt)}`));
+  chips.append(earningsEl(self.earnings));
+  info.append(chips);
 
   const handName = h('div', 'my-hand-name');
   if (s.you?.handName) handName.textContent = self.folded ? `${s.you.handName} (folded)` : s.you.handName;
   else {
     const status = statusText(s, self);
-    if (status && status !== 'Away') handName.textContent = status === 'Next hand' ? "You're in from the next hand" : status;
+    if (status && status !== 'Disconnected') handName.textContent = status === 'Next hand' ? "You're in from the next hand" : status;
   }
-  nodes.push(handName);
+  const status = h('div', 'me-status');
+  if (self.lastAction && BETTING.has(s.phase)) status.append(h('span', `act-pill ${actionClass(self.lastAction)}`, pastTense(self.lastAction)));
+  status.append(handName);
+  info.append(status);
 
-  const name = h('div', 'my-name');
-  name.append(h('span', 'name', self.name));
-  if (self.seat === s.buttonSeat && self.inHand) name.append(h('span', 'dealer-tag', 'D'));
-  const blind = blindTag(s, self);
-  if (blind) name.append(blind);
-  name.append(h('span', 'dot', '·'), h('span', 'num', `${fmt(self.chips)} chips`));
-  if (self.debt > 0) name.append(h('span', 'owes num', `owes ${fmt(self.debt)}`));
-  name.append(earningsEl(self.earnings));
-  if (self.lastAction && BETTING.has(s.phase)) name.append(h('span', `seat-action ${actionClass(self.lastAction)}`, self.lastAction));
-  nodes.push(name);
-
-  // Sit out, reset, pay back and borrow, next to my seat (on the same line as my name where there is room).
-  const tools = h('span', 'my-tools');
+  // Sit out, reset, pay back and borrow.
+  const tools = h('div', 'my-tools');
   const sit = h('button', self.sittingOut ? 'toggle-btn on' : 'toggle-btn');
   sit.type = 'button';
   sit.setAttribute('aria-pressed', String(self.sittingOut));
@@ -360,9 +369,18 @@ function renderMe(s: TableState, self: PlayerView, counts: Counts, win: Set<stri
   }
   if (free && self.chips === 0) tools.append(toolButton('Borrow chips', 'Borrow a buy-in from the bank', openBorrowPrompt, 'link-btn strong'));
   if (free) tools.append(toolButton('Reset chips', 'Start over with the starting chips', resetChips));
-  name.append(tools);
+  info.append(tools);
 
-  spot.replaceChildren(...nodes);
+  const box = h('div', 'hand-box size-lg');
+  box.dataset.id = self.id;
+  const mine = s.you?.cards ?? [];
+  const { el, added } = handEl('me', mine, !firstRender);
+  counts.added += added;
+  markWinners(el, win);
+  box.append(el);
+  if (mine.length === 0) box.classList.add('empty');
+
+  spot.replaceChildren(info, box);
 }
 
 // ------------------------------------------------------------------- sounds
@@ -396,7 +414,7 @@ function animatePots(s: TableState, prev: TableState | null): void {
   if (!pot) return;
   for (const id of pot.winners) {
     const target =
-      id === app.myId ? document.querySelector('#my-spot .hand-box') : document.querySelector(`#others .seat[data-id="${id}"]`);
+      id === app.myId ? document.querySelector('#my-spot .hand-box') : document.querySelector(`#opponents .plate[data-id="${id}"]`);
     flyChips($('pots'), target, pot.amount);
   }
 }
@@ -419,7 +437,7 @@ export function renderTable(s: TableState, self: PlayerView): void {
   const win = s.phase === 'showdown' || s.phase === 'hand_over' ? winningKeys(s) : new Set<string>();
 
   renderCenter(s, self, counts, win);
-  renderOthers(s, self, counts, win);
+  renderOpponents(s, self, counts, win);
   renderMe(s, self, counts, win);
   $('felt').classList.toggle('show-results', win.size > 0);
 

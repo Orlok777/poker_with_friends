@@ -253,26 +253,6 @@ button.block {
   outline-offset: 2px;
 }
 
-kbd {
-  display: inline-grid;
-  place-items: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 5px;
-  font: 600 11px/1 var(--font);
-  border-radius: 5px;
-  background: rgba(0, 0, 0, 0.22);
-  color: inherit;
-  opacity: 0.85;
-}
-
-/* Keyboard hints mean nothing on a touch screen. */
-@media (hover: none) and (pointer: coarse) {
-  kbd {
-    display: none;
-  }
-}
-
 /* ------------------------------------------------------------------ inputs */
 
 .field {

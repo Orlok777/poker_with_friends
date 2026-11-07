@@ -109,9 +109,13 @@
         </div>
       </header>
 
+      <!-- One nameplate per other player, in seat order from my left. -->
+      <div id="opponents" class="opponents" aria-label="Other players"></div>
+
       <main class="felt-wrap">
         <div id="felt" class="felt">
-          <div id="others" class="others"></div>
+          <!-- The chips in front of each other player, one column under each nameplate. -->
+          <div id="bets" class="bets" aria-label="Bets this round"></div>
           <div id="center" class="center">
             <p id="felt-rules" class="felt-rules"></p>
             <div class="board-wrap">
@@ -124,9 +128,39 @@
             </div>
             <p id="banner" class="banner" role="status" aria-live="polite" hidden></p>
           </div>
-          <div id="my-spot" class="my-spot"></div>
+          <div id="my-bet" class="my-bet-slot"></div>
         </div>
       </main>
+
+      <!-- The bottom dock: pot total and the action row on the left, my seat and cards on the right. -->
+      <div class="dock">
+        <div id="my-spot" class="my-spot"></div>
+
+        <footer class="table-controls">
+          <p class="pot-total"><span class="pot-total-label">Pot:</span> <span id="pot-total" class="num">0</span></p>
+          <p id="watch-note" class="watch-note" hidden></p>
+
+          <div id="action-bar" class="action-bar" hidden>
+            <div class="sizing" role="group" aria-label="Bet or raise amount">
+              <p class="amount-field">
+                <span class="amount-caption">Amount</span>
+                <output id="amount-value" class="amount-value num" for="amount-slider" aria-live="polite">–</output>
+              </p>
+              <div class="stepper">
+                <button id="amount-down" type="button" class="ghost step-btn" aria-label="Decrease the amount by the small blind" title="Down by the small blind">−</button>
+                <input id="amount-slider" class="amount-slider" type="range" aria-label="Bet or raise amount" />
+                <button id="amount-up" type="button" class="ghost step-btn" aria-label="Increase the amount by the small blind" title="Up by the small blind">+</button>
+              </div>
+              <button id="allin-btn" type="button" class="ghost allin-btn" title="Put in all your chips"><span id="allin-label">All in</span></button>
+            </div>
+            <div class="act-row">
+              <button id="fold-btn" type="button" class="action-btn act-fold"><span data-icon="close"></span><span>Fold</span></button>
+              <button id="call-btn" type="button" class="action-btn act-call"><span data-icon="check"></span><span id="call-label">Check</span></button>
+              <button id="raise-btn" type="button" class="action-btn act-raise"><span data-icon="raise"></span><span id="raise-label">Raise to</span></button>
+            </div>
+          </div>
+        </footer>
+      </div>
 
       <div id="rules-pop" class="rules-pop" role="dialog" aria-label="Table rules" hidden>
         <h2 class="panel-title">Table rules</h2>
@@ -141,32 +175,6 @@
         </div>
         <ol id="log" class="log-list" aria-live="polite"></ol>
       </aside>
-
-      <footer class="table-controls">
-        <p id="watch-note" class="watch-note" hidden></p>
-
-        <div id="action-bar" class="action-bar" hidden>
-          <div class="sizing" role="group" aria-label="Bet or raise amount">
-            <label class="amount-field">
-              <span class="amount-caption">Amount</span>
-              <input id="amount-input" class="amount-input num" type="number" inputmode="numeric" step="1" />
-            </label>
-            <input id="amount-slider" class="amount-slider" type="range" aria-label="Bet or raise amount" />
-            <div class="presets">
-              <button type="button" class="ghost preset" data-preset="min">Min</button>
-              <button type="button" class="ghost preset" data-preset="0.5">½ pot</button>
-              <button type="button" class="ghost preset" data-preset="0.75">¾ pot</button>
-              <button type="button" class="ghost preset" data-preset="1">Pot</button>
-              <button id="allin-btn" type="button" class="ghost preset allin-btn" title="Put in all your chips"><span id="allin-label">All in</span></button>
-            </div>
-          </div>
-          <div class="act-row">
-            <button id="fold-btn" type="button" class="action-btn act-fold"><span data-icon="close"></span><span>Fold</span><kbd>F</kbd></button>
-            <button id="call-btn" type="button" class="action-btn act-call"><span data-icon="check"></span><span id="call-label">Check</span><kbd>C</kbd></button>
-            <button id="raise-btn" type="button" class="action-btn act-raise"><span data-icon="raise"></span><span id="raise-label">Raise to</span><kbd>R</kbd></button>
-          </div>
-        </div>
-      </footer>
     </section>
 
     <!-- Connection lost -->

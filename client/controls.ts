@@ -1,7 +1,9 @@
-// The action bar under the felt: Fold, Check or Call, Bet or Raise to, with the amount box,
-// slider and presets, plus their keyboard shortcuts.
+// The action row in the dock: Fold, Check or Call, and Bet or Raise to, with the amount shown as text
+// and set with the slider, the − and + buttons, or All in. There are no keyboard shortcuts: every action
+// is a button press.
 
-import type { ActionKind, ClientMsg, LegalView, TableState } from '../shared/types.js';
+import type { ActionKind, ClientMsg, LegalView } from '../shared/types.js';
+import { amountLimits, snapAmount, stepAmount, type AmountLimits } from './amount.js';
 import { app, me, send } from './app.js';
 import { $, fmt } from './dom.js';
 import { playAllIn } from './sound.js';
@@ -12,7 +14,7 @@ const ALL_IN_CONFIRM_MS = 3000;
 let actionBusy = false;
 let allInArmed = false;
 let allInTimer: number | null = null;
-/** The turn the amount box was last filled for, so typing is not overwritten by the next update. */
+/** The decision the amount was last reset for, so moving the slider is not undone by the next update. */
 let amountTurn = '';
 let amount = 0;
 
@@ -25,28 +27,24 @@ function legal(): LegalView | null {
   return app.state?.you?.legal ?? null;
 }
 
-/** Chips in the pots plus everything in front of the players. */
-function potTotal(s: TableState): number {
-  return s.pots.reduce((sum, p) => sum + p.amount, 0) + s.players.reduce((sum, p) => sum + p.bet, 0);
-}
-
-function clamp(value: number, l: LegalView): number {
-  return Math.max(l.minTo, Math.min(l.maxTo, Math.round(value)));
-}
-
-/** A pot-sized bet or raise, or a fraction of one: call first, then add that part of the pot. */
-function potTo(s: TableState, l: LegalView, fraction: number): number {
-  const self = me();
-  const myBet = self?.bet ?? 0;
-  const current = myBet + l.callAmount;
-  const afterCall = potTotal(s) + l.callAmount;
-  return clamp(current + afterCall * fraction, l);
+/** The legal range of the amount for my current decision, or null when it is not my turn. */
+function limits(): AmountLimits | null {
+  const l = legal();
+  return l ? amountLimits(me()?.bet ?? 0, l) : null;
 }
 
 function setAmount(value: number): void {
-  const l = legal();
-  if (!l || !(l.canBet || l.canRaise)) return;
-  amount = clamp(value, l);
+  const lim = limits();
+  if (!lim || lim.fixed) return;
+  amount = snapAmount(value, lim);
+  renderControls();
+}
+
+function stepBy(dir: 1 | -1): void {
+  const s = app.state;
+  const lim = limits();
+  if (!s || !lim || lim.fixed) return;
+  amount = stepAmount(amount, dir, s.settings.smallBlind, lim);
   renderControls();
 }
 
@@ -63,9 +61,11 @@ function act(kind: 'fold' | 'call' | 'raise'): void {
   disarmAllIn();
   if (kind === 'fold') return sendAction({ type: 'action', action: 'fold' });
   if (kind === 'call') return sendAction({ type: 'action', action: l.canCheck ? 'check' : 'call' });
-  if (!(l.canBet || l.canRaise)) return;
-  const to = clamp(amount, l);
-  if (to === l.allInTo) playAllIn();
+  const lim = limits()!;
+  const to = snapAmount(amount, lim);
+  // Raising to the call amount is just a call, which has its own button.
+  if (lim.fixed || to === lim.callTo) return;
+  if (to === lim.allInTo) playAllIn();
   sendAction({ type: 'action', action: (l.canBet ? 'bet' : 'raise') as ActionKind, amount: to });
 }
 
@@ -85,7 +85,7 @@ function onAllInClick(): void {
   if (!allInArmed) {
     allInArmed = true;
     allInTimer = window.setTimeout(disarmAllIn, ALL_IN_CONFIRM_MS);
-    if (l.canBet || l.canRaise) amount = l.maxTo;
+    amount = limits()!.allInTo;
     renderControls();
     return;
   }
@@ -97,78 +97,18 @@ function onAllInClick(): void {
   sendAction({ type: 'action', action: 'all_in' });
 }
 
-// ---------------------------------------------------------------- keyboard
-
-/** Brief pressed look when a shortcut key is used, so the player sees which button fired. */
-function flash(id: string): void {
-  const el = $(id);
-  el.classList.remove('key-pressed');
-  void el.offsetWidth;
-  el.classList.add('key-pressed');
-  window.setTimeout(() => el.classList.remove('key-pressed'), 160);
-}
-
-const KEYS: Record<string, ['fold' | 'call' | 'raise', string]> = {
-  f: ['fold', 'fold-btn'],
-  c: ['call', 'call-btn'],
-  r: ['raise', 'raise-btn'],
-};
-
-function onKey(ev: KeyboardEvent): void {
-  const target = ev.target instanceof HTMLElement ? ev.target : null;
-  // Pressing any other key cancels a pending all in.
-  if (allInArmed && !target?.closest('#allin-btn')) disarmAllIn();
-  if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
-  if ($('screen-table').hidden || $('action-bar').hidden) return;
-  // Enter in the amount box bets or raises that amount.
-  if (target?.id === 'amount-input' && ev.key === 'Enter') {
-    ev.preventDefault();
-    readAmountInput();
-    flash('raise-btn');
-    act('raise');
-    return;
-  }
-  if (target && target.closest('input, textarea, select, [contenteditable="true"]') !== null) return;
-  const hit = KEYS[ev.key.toLowerCase()];
-  if (!hit) return;
-  const [kind, id] = hit;
-  if ($<HTMLButtonElement>(id).disabled) return;
-  ev.preventDefault();
-  flash(id);
-  act(kind);
-}
-
-function readAmountInput(): void {
-  const input = $<HTMLInputElement>('amount-input');
-  const value = Number(input.value);
-  if (input.value !== '' && Number.isFinite(value)) setAmount(value);
-  else renderControls();
-}
-
 // -------------------------------------------------------------------- init
 
 export function initControls(): void {
   $('fold-btn').addEventListener('click', () => act('fold'));
   $('call-btn').addEventListener('click', () => act('call'));
-  $('raise-btn').addEventListener('click', () => {
-    readAmountInput();
-    act('raise');
-  });
+  $('raise-btn').addEventListener('click', () => act('raise'));
   $('allin-btn').addEventListener('click', onAllInClick);
-  const input = $<HTMLInputElement>('amount-input');
-  input.addEventListener('change', readAmountInput);
-  input.addEventListener('focus', () => input.select());
+  // The slider only moves by dragging its handle: styles/controls.css makes the track ignore the pointer.
   const slider = $<HTMLInputElement>('amount-slider');
   slider.addEventListener('input', () => setAmount(Number(slider.value)));
-  for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-preset]')) {
-    btn.addEventListener('click', () => {
-      const s = app.state;
-      const l = legal();
-      if (!s || !l) return;
-      const preset = btn.dataset.preset!;
-      setAmount(preset === 'min' ? l.minTo : potTo(s, l, Number(preset)));
-    });
-  }
+  $('amount-down').addEventListener('click', () => stepBy(-1));
+  $('amount-up').addEventListener('click', () => stepBy(1));
   // Clicking anything else cancels the all-in question (capture, so it runs before that click's own handler).
   document.addEventListener(
     'pointerdown',
@@ -177,7 +117,10 @@ export function initControls(): void {
     },
     true,
   );
-  document.addEventListener('keydown', onKey);
+  // So does any key other than Enter or Space on the All in button itself.
+  document.addEventListener('keydown', (ev) => {
+    if (allInArmed && !(ev.target instanceof Element && ev.target.closest('#allin-btn'))) disarmAllIn();
+  });
 }
 
 // ------------------------------------------------------------------ render
@@ -194,12 +137,14 @@ export function renderControls(): void {
 
   const l = legal();
   const myTurn = !!l && !actionBusy;
-  const turnKey = l ? `${s.hand}:${s.phase}:${l.minTo}:${l.callAmount}` : '';
-  if (l && turnKey !== amountTurn) {
-    // A new decision: the amount box starts at the minimum bet or raise.
+  const lim = l ? amountLimits(self.bet, l) : null;
+  const turnKey = l ? `${s.hand}:${s.phase}:${self.bet}:${l.callAmount}:${l.minTo}:${l.allInTo}` : '';
+  if (lim && turnKey !== amountTurn) {
+    // A new decision: the amount starts at the call amount (my current bet when I can check).
     amountTurn = turnKey;
-    amount = l.minTo;
+    amount = lim.callTo;
   }
+  if (!l) amountTurn = '';
   if (!l && allInArmed) {
     allInArmed = false;
     if (allInTimer !== null) window.clearTimeout(allInTimer);
@@ -216,30 +161,31 @@ export function renderControls(): void {
   $('call-label').textContent = canCheck ? 'Check' : `Call ${fmt(toCall)}`;
   $<HTMLButtonElement>('call-btn').disabled = !myTurn;
 
-  // Bet or Raise to
-  const canSize = !!l && (l.canBet || l.canRaise);
+  // Bet or Raise to: the label follows the amount, and the button waits until it differs from the call.
+  const adjustable = !!lim && !lim.fixed;
   const noBet = l ? l.canBet || (!l.canRaise && highest === 0) : highest === 0;
   const verb = noBet ? 'Bet' : 'Raise to';
-  $('raise-label').textContent = canSize ? `${verb} ${fmt(amount)}` : verb;
-  $<HTMLButtonElement>('raise-btn').disabled = !myTurn || !canSize;
+  const sizing = !!lim && adjustable && amount !== lim.callTo;
+  $('raise-label').textContent = !sizing ? verb : amount === lim.allInTo ? `All in ${fmt(amount)}` : `${verb} ${fmt(amount)}`;
+  $<HTMLButtonElement>('raise-btn').disabled = !myTurn || !sizing;
 
-  const input = $<HTMLInputElement>('amount-input');
+  const value = $('amount-value');
   const slider = $<HTMLInputElement>('amount-slider');
-  input.disabled = !myTurn || !canSize;
-  slider.disabled = !myTurn || !canSize;
-  if (canSize) {
-    input.min = String(l!.minTo);
-    input.max = String(l!.maxTo);
-    slider.min = String(l!.minTo);
-    slider.max = String(l!.maxTo);
+  const canAdjust = myTurn && adjustable;
+  value.classList.toggle('off', !canAdjust);
+  slider.disabled = !canAdjust;
+  $<HTMLButtonElement>('amount-down').disabled = !canAdjust || amount <= lim!.callTo;
+  $<HTMLButtonElement>('amount-up').disabled = !canAdjust || amount >= lim!.allInTo;
+  if (lim) {
+    slider.min = String(lim.callTo);
+    slider.max = String(lim.allInTo);
     slider.step = '1';
     slider.value = String(amount);
-    if (document.activeElement !== input) input.value = String(amount);
+    value.textContent = fmt(amount);
   } else {
-    input.value = '';
+    value.textContent = '–';
     slider.value = slider.min;
   }
-  for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-preset]')) btn.disabled = !myTurn || !canSize;
 
   // All in, with a confirm step
   const allIn = $<HTMLButtonElement>('allin-btn');
