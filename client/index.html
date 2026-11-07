@@ -100,7 +100,7 @@
         <span id="round-label" class="round-label"></span>
         <div class="icon-row">
           <button class="icon-btn mute-btn" type="button" aria-label="Mute sound" title="Mute sound"></button>
-          <button id="rules-btn" class="icon-btn" type="button" aria-label="Table rules" title="Table rules" aria-expanded="false" aria-controls="rules-pop" data-icon="rules"></button>
+          <button id="rules-btn" class="icon-btn" type="button" aria-label="How to play and table rules" title="How to play" aria-expanded="false" aria-controls="guide-drawer" data-icon="rules"></button>
           <button id="log-btn" class="icon-btn log-btn" type="button" aria-label="Table log" title="Table log" aria-expanded="false" aria-controls="log-drawer">
             <span data-icon="log"></span>
             <span id="log-unread" class="unread num" hidden></span>
@@ -162,10 +162,21 @@
         </footer>
       </div>
 
-      <div id="rules-pop" class="rules-pop" role="dialog" aria-label="Table rules" hidden>
-        <h2 class="panel-title">Table rules</h2>
-        <dl id="rules-list" class="rules-list"></dl>
-      </div>
+      <!-- How to play and the table rules: a side drawer that does not block the table. -->
+      <aside id="guide-drawer" class="log-drawer guide-drawer" aria-labelledby="guide-title" hidden>
+        <div class="drawer-head">
+          <h2 id="guide-title" class="panel-title">How to play</h2>
+          <button id="guide-close" class="icon-btn" type="button" aria-label="Close how to play" title="Close" data-icon="close"></button>
+        </div>
+        <div class="guide-tabs" role="tablist" aria-label="Help">
+          <button id="guide-tab-how" class="guide-tab" type="button" role="tab" aria-selected="true" aria-controls="guide-how">How to play</button>
+          <button id="guide-tab-rules" class="guide-tab" type="button" role="tab" aria-selected="false" aria-controls="guide-rules" tabindex="-1">Table rules</button>
+        </div>
+        <div id="guide-how" class="guide-body" role="tabpanel" aria-labelledby="guide-tab-how" tabindex="0"></div>
+        <div id="guide-rules" class="guide-body" role="tabpanel" aria-labelledby="guide-tab-rules" tabindex="0" hidden>
+          <dl id="rules-list" class="rules-list"></dl>
+        </div>
+      </aside>
 
       <div id="log-scrim" class="scrim" hidden></div>
       <aside id="log-drawer" class="log-drawer" aria-labelledby="log-title" hidden>

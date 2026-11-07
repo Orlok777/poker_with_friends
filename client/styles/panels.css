@@ -26,21 +26,7 @@
   background: var(--surface-hover);
 }
 
-/* ------------------------------------------------------------------- rules */
-
-.rules-pop {
-  position: fixed;
-  top: 56px;
-  right: max(20px, calc((100vw - 1280px) / 2 + 20px));
-  z-index: 40;
-  width: 300px;
-  padding: 16px 18px;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-3);
-  animation: pop-in var(--t-fade) var(--ease);
-}
+/* ------------------------------------------------------------ table rules tab */
 
 .rules-list {
   margin: 10px 0 0;
@@ -148,7 +134,7 @@
   }
 }
 
-/* Phones: the log is a bottom sheet and the rules sit under the icon row. */
+/* Phones: the log is a bottom sheet. */
 @media (max-width: 700px) {
   .log-drawer {
     top: auto;
@@ -159,13 +145,6 @@
     border-top: 1px solid var(--line);
     border-radius: var(--r-lg) var(--r-lg) 0 0;
     animation-name: slide-up;
-  }
-
-  .rules-pop {
-    top: 52px;
-    right: 10px;
-    left: 10px;
-    width: auto;
   }
 }
 
@@ -232,4 +211,225 @@
 .modal-actions button {
   flex: 1 1 0;
   min-width: 0;
+}
+
+/* ------------------------------------------------------------- how to play */
+
+/*
+ * A side drawer like the log, but it stops above the dock (--guide-bottom is set from the dock's height), so
+ * the action bar and my cards stay visible and usable. It has no scrim and never blocks the table.
+ */
+.guide-drawer {
+  top: 52px;
+  bottom: var(--guide-bottom, 0px);
+  width: min(380px, 100vw);
+  border-top: 1px solid var(--line);
+  border-radius: var(--r-lg) 0 0 0;
+  box-shadow: var(--shadow-2);
+}
+
+.guide-drawer[hidden] {
+  display: none;
+}
+
+.guide-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.guide-tab {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--r-xs) var(--r-xs) 0 0;
+}
+
+.guide-tab[aria-selected='true'] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.guide-body {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 18px 20px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.guide-body[hidden] {
+  display: none;
+}
+
+.guide-h {
+  margin: 16px 0 4px;
+  font-size: var(--fs-lg);
+  color: var(--accent);
+}
+
+.guide-lead {
+  margin: 0 0 10px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.guide-sub {
+  margin: 16px 0 4px;
+  font-size: var(--fs-sm);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.rank-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.rank-row {
+  padding: 10px 12px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.rank-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.rank-n {
+  min-width: 16px;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+
+.rank-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.rank-you {
+  display: none;
+  flex: none;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: var(--r-pill);
+}
+
+.rank-explain {
+  margin: 2px 0 8px 24px;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.rank-cards {
+  --cw: 40px;
+  margin-left: 24px;
+}
+
+.rank-cards .card + .card {
+  margin-left: calc(var(--cw) * -0.12);
+}
+
+.rank-row.mine {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.rank-row.mine .rank-name,
+.rank-row.mine .rank-n {
+  color: var(--accent);
+}
+
+.rank-row.mine .rank-you {
+  display: inline-block;
+}
+
+.rank-row.mine .rank-explain {
+  color: var(--text);
+}
+
+.guide-notes {
+  margin: 14px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.guide-items {
+  margin: 0;
+}
+
+.guide-items dt {
+  margin-top: 8px;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+
+.guide-items dd {
+  margin: 1px 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.guide-items dd.solo {
+  margin-top: 0;
+}
+
+/* The Table rules tab keeps its old rows. */
+.guide-body .rules-list {
+  margin-top: 8px;
+}
+
+/* Phones: a full-width panel between the icon row and the dock. */
+@media (max-width: 700px) {
+  .guide-drawer {
+    top: 48px;
+    left: 0;
+    width: 100%;
+    border-left: 0;
+    border-radius: 0;
+    animation-name: slide-down;
+  }
+
+  .guide-drawer .drawer-head {
+    padding-block: 4px;
+  }
+
+  .guide-body {
+    padding-inline: 14px;
+  }
+}
+
+@keyframes slide-down {
+  from {
+    transform: translateY(-12px);
+    opacity: 0;
+  }
 }

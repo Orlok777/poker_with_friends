@@ -7,7 +7,7 @@ import { openBorrowPrompt } from './borrow.js';
 import { cardKey, chipStack, flyChips, handEl, resetCardMemory, ringEl, runCardAnimations, tickRings } from './cards.js';
 import { $, fmt, fmtSigned, h, prefersReducedMotion } from './dom.js';
 import { icon } from './icons.js';
-import { renderLog } from './panels.js';
+import { renderGuide, renderLog } from './panels.js';
 import { awayIds, holdNow, ingest, onReveal, resetReveal, spotlightActive, view } from './reveal.js';
 import './spotlight.js';
 import { playAllIn, playChip, playDeal, playFlip, playKnock, playLose, playPayout, playShuffle, playWin } from './sound.js';
@@ -529,6 +529,7 @@ export function renderTable(real: TableState, self: PlayerView): void {
   $('felt').classList.toggle('show-results', !!spot?.showdown);
   // The log follows the table: it never gets ahead of the cards and pots that are on screen.
   renderLog(s);
+  renderGuide(s);
 
   runCardAnimations();
   playChanges(s, prev, counts);
