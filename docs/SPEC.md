@@ -86,6 +86,7 @@ Use a token rather than "connections from localhost". Tunnel traffic also arrive
 - **Settings:** locked once the host clicks Start, until the server restarts.
 - **Joining a game in progress:** the player goes straight to the table and takes a free seat from the next round. If every seat is full, they watch until one frees up.
 - **Kicking:** the host can kick any player. A kicked player sees a message and can't rejoin with that username until the server restarts.
+- **The game ends when the last player leaves** (or is dropped after not coming back). The table is wiped: settings go back to the defaults, and the round counter, shoe, log and kick list are cleared. Chips and debts stay saved per username. While the game is ended, `server_info` has `gameOpen: false`, the join screen says "This game has ended. Ask the host to create a new game.", and a join without the host token is refused with `game_closed`. Joining with the host link shows a "Create new game" button and starts a fresh game in the waiting room with that player as host. If the last player leaves in the middle of a hand, the game ends when the round is settled.
 - **The host's own seat:** the host plays like everyone else. If the host's tab closes, the game continues, and reopening the host link restores host controls.
 - **Ending the game:** stopping the server (Ctrl+C or closing its window) ends the game for everyone.
 
@@ -148,7 +149,7 @@ Every message is JSON with a `type` field, and the types are defined once in `/s
 
 | Type | Payload | Sent when |
 | --- | --- | --- |
-| `server_info` | whether a password is set, whether seats are free, current phase | As soon as a client connects |
+| `server_info` | whether a password is set, whether seats are free, current phase, whether a game is open (`gameOpen`) | As soon as a client connects |
 | `joined` | playerId, reconnect token, isHost | After a join or reconnect |
 | `table_state` | phase, settings, hostId, players (name, chips, ready, connected, and one hand, or two after a split, each with cards, total, bet, status, doubled, all-in flag and result; plus which hand is active and whether split is allowed now), seats, dealer cards, whose turn, timer deadline, a counter of shoe reshuffles | After every change |
 | `round_result` | per hand (two entries for a player who split): win, loss, push or blackjack, plus chip change | End of each round |
@@ -215,6 +216,7 @@ No single player should be able to freeze or crash the table. When anything goes
 | Page refresh or reconnect within 20 s | The client sends its saved reconnect token (kept in localStorage) and gets the same seat back |
 | Reconnect after 20 s | Joins again with the same username and saved chips, and takes a seat from the next round |
 | Host's tab closes | The game continues; reopening the host link restores host controls |
+| Everyone has left | The game ends; only the host link can create a new one |
 | The server stops | Players see a "Connection lost" screen with a Retry button; chips are kept up to the last settled round |
 | Username already at the table | Join is rejected with "That name is in use" |
 | Wrong table password | Join is rejected with "Wrong password" |

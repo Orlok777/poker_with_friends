@@ -156,6 +156,8 @@ export class Table {
   /** Counts reshuffles, so clients can play a sound when it goes up. */
   private shuffles = 0;
   private closed = false;
+  /** False after the last player left: only the host link can open a new game. */
+  private gameOpen = true;
 
   private readonly store: PlayerStore;
   private readonly hostToken: string;
@@ -279,12 +281,19 @@ export class Table {
     }
     const key = username.toLowerCase();
 
+    const asHost =
+      typeof msg.hostToken === 'string' && msg.hostToken.length > 0 && safeEqual(msg.hostToken, this.hostToken);
+
+    if (!this.gameOpen) {
+      if (!asHost) {
+        return this.sendError(conn, 'game_closed', 'This game has ended. Ask the host to create a new game.');
+      }
+      this.openGame(conn);
+    }
+
     if (this.kickedKeys.has(key)) {
       return this.sendError(conn, 'kicked', 'You were kicked from this table and can not rejoin until the server restarts');
     }
-
-    const asHost =
-      typeof msg.hostToken === 'string' && msg.hostToken.length > 0 && safeEqual(msg.hostToken, this.hostToken);
 
     const existing = [...this.players.values()].find((x) => x.key === key);
     if (existing) {
@@ -415,8 +424,51 @@ export class Table {
       p.conn = null;
     }
     if (this.hostId === p.id) this.hostId = null;
+    if (this.players.size === 0) {
+      this.endGame();
+      return;
+    }
     this.broadcast();
     this.checkBettingDone();
+  }
+
+  /** The last player left: forget this game completely. A new one needs the host link. */
+  private endGame(): void {
+    this.clearFlow();
+    this.gameOpen = false;
+    this.settings = { ...DEFAULT_SETTINGS };
+    this.phase = 'waiting';
+    this.started = false;
+    this.round = 0;
+    this.hostId = null;
+    this.seats = Array(DEFAULT_SETTINGS.maxPlayers).fill(null);
+    this.kickedKeys.clear();
+    this.dealerCards = [];
+    this.dealerRevealed = false;
+    this.turn = null;
+    this.deadline = null;
+    this.shoe = null;
+    this.logEntries = [];
+    this.noBetsLogged = false;
+    this.shuffles = 0;
+    this.tellUnjoined();
+  }
+
+  /** The host created a new game. Everyone still on the join screen is told it is open again. */
+  private openGame(except: Connection): void {
+    this.gameOpen = true;
+    this.tellUnjoined(except);
+  }
+
+  private tellUnjoined(except?: Connection): void {
+    for (const c of this.connections) {
+      if (c === except || this.bound.has(c)) continue;
+      try {
+        c.send(this.serverInfo());
+      } catch (err) {
+        this.logger(`Could not send to a client: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   // ---------------------------------------------------------------- waiting
@@ -866,6 +918,7 @@ export class Table {
     for (const p of [...this.players.values()]) {
       if (p.leaving) this.removePlayer(p);
     }
+    if (!this.gameOpen) return; // the last player left, so the game ended
     this.beginBetting();
   }
 
@@ -901,6 +954,7 @@ export class Table {
       passwordRequired: this.settings.password !== '',
       seatsFree: holders + queued < this.settings.maxPlayers,
       phase: this.phase,
+      gameOpen: this.gameOpen,
     };
   }
 

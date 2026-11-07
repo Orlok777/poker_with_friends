@@ -92,13 +92,28 @@ function doJoin(username: string, password: string, auto: boolean): void {
   send(msg);
 }
 
+/** The join form follows whether a game is running: after everyone left, only the host can create a new one. */
+function renderJoinPanel(gameOpen: boolean): void {
+  const canCreate = !gameOpen && hostToken !== null;
+  const blocked = !gameOpen && !canCreate;
+  $('join-sub').textContent = gameOpen
+    ? 'Play for fake chips. Pick a name to sit down.'
+    : canCreate
+      ? 'The last player left, so the game ended. Pick a name to create a new game.'
+      : 'This game has ended. Ask the host to create a new game.';
+  $('join-btn').textContent = gameOpen ? 'Join table' : canCreate ? 'Create new game' : 'Game ended';
+  $<HTMLButtonElement>('join-btn').disabled = blocked || joinAttempt !== null;
+  $<HTMLInputElement>('join-name').disabled = blocked;
+}
+
 function handle(msg: ServerMsg): void {
   switch (msg.type) {
     case 'server_info': {
       $('join-password-row').hidden = !msg.passwordRequired;
+      renderJoinPanel(msg.gameOpen);
       if (app.joined) return;
       const session = loadSession();
-      if (session && session.token && !joinAttempt) {
+      if (session && session.token && !joinAttempt && msg.gameOpen) {
         doJoin(session.username, session.password, true); // refresh or reconnect
       } else if (!joinAttempt) {
         $<HTMLInputElement>('join-name').value ||= session?.username ?? '';
@@ -149,7 +164,7 @@ function handle(msg: ServerMsg): void {
   }
 }
 
-const JOIN_ERRORS = new Set(['bad_username', 'name_in_use', 'wrong_password', 'kicked', 'bad_message']);
+const JOIN_ERRORS = new Set(['bad_username', 'name_in_use', 'wrong_password', 'kicked', 'bad_message', 'game_closed']);
 
 function handleError(code: string, message: string): void {
   if (!app.joined && joinAttempt) {
@@ -160,7 +175,7 @@ function handleError(code: string, message: string): void {
     if (JOIN_ERRORS.has(code)) {
       joinAttempt = null;
       $('join-error').textContent = message;
-      $<HTMLButtonElement>('join-btn').disabled = false;
+      $<HTMLButtonElement>('join-btn').disabled = code === 'game_closed' && hostToken === null;
       showScreen('join');
       return;
     }

@@ -220,6 +220,7 @@ export type ErrorCode =
   | 'bad_username'
   | 'name_in_use'
   | 'wrong_password'
+  | 'game_closed'
   | 'kicked'
   | 'wrong_phase'
   | 'not_your_turn'
@@ -246,7 +247,7 @@ export interface RoundResultEntry {
 }
 
 export type ServerMsg =
-  | { type: 'server_info'; passwordRequired: boolean; seatsFree: boolean; phase: Phase }
+  | { type: 'server_info'; passwordRequired: boolean; seatsFree: boolean; phase: Phase; gameOpen: boolean }
   | { type: 'joined'; playerId: string; reconnectToken: string; isHost: boolean }
   | TableState
   | { type: 'round_result'; round: number; results: RoundResultEntry[] }

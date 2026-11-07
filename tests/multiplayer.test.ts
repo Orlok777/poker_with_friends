@@ -838,3 +838,66 @@ describe('borrowing', () => {
     expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8')).Alex).toBe(1000);
   });
 });
+
+describe('closing the game', () => {
+  it('ends the game when the last player leaves, and only the host link can create a new one', async () => {
+    const { srv } = await h.boot();
+    const alex = await h.client(srv);
+    const bob = await h.client(srv);
+    await alex.join('Alex', { hostToken: srv.hostToken });
+    await bob.join('Bob');
+    alex.send({ type: 'update_settings', settings: { startingChips: 2000, minBet: 50 } });
+    await alex.waitForState((s) => s.settings.minBet === 50);
+
+    // The game stays open while someone is still at the table.
+    alex.send({ type: 'leave' });
+    await bob.waitForState((s) => s.players.length === 1);
+    const stillOpen = await h.client(srv);
+    expect(stillOpen.all.find((m) => m.type === 'server_info')).toMatchObject({ gameOpen: true });
+    stillOpen.close();
+
+    // A newcomer waiting on the join screen is told when the game ends.
+    const waiting = await h.client(srv);
+    bob.send({ type: 'leave' });
+    await waitUntil(() => waiting.all.some((m) => m.type === 'server_info' && !m.gameOpen), 3000, 'game closed info');
+    expect(bob.all.filter((m) => m.type === 'server_info').pop()).toMatchObject({ gameOpen: false });
+
+    // Players without the host token can't join any more.
+    const carol = await h.client(srv);
+    expect(carol.all.find((m) => m.type === 'server_info')).toMatchObject({ gameOpen: false });
+    const refused = await carol.join('Carol');
+    expect(refused).toMatchObject({ type: 'error', code: 'game_closed' });
+
+    // The host link creates a fresh game: default settings, empty log, round 0.
+    const host = await h.client(srv);
+    const joined = await host.join('Alex', { hostToken: srv.hostToken });
+    expect(joined).toMatchObject({ type: 'joined', isHost: true });
+    const fresh = host.state!;
+    expect(fresh.phase).toBe('waiting');
+    expect(fresh.round).toBe(0);
+    expect(fresh.settings.minBet).toBe(10);
+    expect(fresh.settings.startingChips).toBe(1000);
+    expect(fresh.log.map((l) => l.text)).toEqual(['Alex joined']);
+    await waitUntil(() => waiting.all.filter((m) => m.type === 'server_info').pop()?.type === 'server_info' && (waiting.all.filter((m) => m.type === 'server_info').pop() as { gameOpen: boolean }).gameOpen, 3000, 'game open info');
+
+    // Now everyone may join again.
+    expect(await carol.join('Carol')).toMatchObject({ type: 'joined' });
+  });
+
+  it('ends the game after the round when the last player leaves in the middle of a hand', async () => {
+    const rigged = cards('10 10 9 7');
+    const { srv } = await h.boot({ rigged, timing: { settleMs: 150, bettingMs: 5000, turnMs: 5000 } });
+    const alex = await h.client(srv);
+    await alex.join('Alex', { hostToken: srv.hostToken });
+    alex.send({ type: 'set_ready', ready: true });
+    alex.send({ type: 'start_game' });
+    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
+    alex.send({ type: 'place_bet', amount: 100 });
+    await alex.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
+    const late = await h.client(srv);
+    alex.send({ type: 'leave' });
+    // The round finishes first, then the empty table closes and the waiting client is told.
+    await waitUntil(() => late.all.some((m) => m.type === 'server_info' && !m.gameOpen), 5000, 'game closed info');
+    expect(await late.join('Late')).toMatchObject({ type: 'error', code: 'game_closed' });
+  });
+});
