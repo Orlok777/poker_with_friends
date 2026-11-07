@@ -175,6 +175,8 @@ describe('playing hands', () => {
         winners: [winner.id],
         handName: 'Two pair, aces and nines',
         cards: cards('AS AH 9H 9S KD'),
+        // Each winner's own best five, so the table can light them in the winner's seat.
+        hands: [{ playerId: winner.id, handName: 'Two pair, aces and nines', cards: cards('AS AH 9H 9S KD') }],
       },
     ]);
     expect(netOf(r, winner.id)).toBe(10);
@@ -205,7 +207,7 @@ describe('playing hands', () => {
     await other.waitForTurn();
     other.send({ type: 'action', action: 'fold' });
     const over = await alex.waitForState((st) => st.phase === 'hand_over');
-    expect(over.result).toMatchObject({ showdown: false, pots: [{ amount: 20, winners: [button.id], handName: null, cards: [] }] });
+    expect(over.result).toMatchObject({ showdown: false, pots: [{ amount: 20, winners: [button.id], handName: null, cards: [], hands: [] }] });
     expect(button.me(over).chips).toBe(1010);
     expect(other.me(over).chips).toBe(990);
     const log = over.log.map((e) => e.text);
@@ -644,7 +646,10 @@ describe('borrowing and paying back', () => {
   it('lets a player who lost everything borrow a buy-in, keeps the debt across a restart and pays it back', async () => {
     // The big blind gets aces and wins; the button goes all in and loses everything.
     const rigged = [headsUp('AS AH', '2D 7C', '9H 9S KD 4C 3H')];
-    const first = await twoPlayers({ rigged, timing: { potMs: 300, turnMs: 5000 } });
+    // This test looks at the showdown and the result while they are on screen. Each stays up for several
+    // hundred ms, far longer than the few ms a message takes, so the checks below can not miss them
+    // (with the fast test timing the showdown lasted ~0 ms and "borrow" was sometimes accepted by mistake).
+    const first = await twoPlayers({ rigged, timing: { revealScale: 0.4, potMs: 300, showdownMs: 600, turnMs: 5000 } });
     const clients = [first.alex, first.bob];
     first.alex.send({ type: 'start_game' });
     const s = await first.alex.waitForState((st) => st.turn !== null);

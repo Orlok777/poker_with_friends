@@ -1,24 +1,32 @@
 // The table screen: the other players' nameplates along the top, the felt with the board and pots in the
 // middle, and my seat in the dock at the bottom.
 
-import { isHiddenCard, type PlayerView, type PublicSettings, type TableState } from '../shared/types.js';
-import { app, confirmKick, isHost, resetChips, send, serverNow } from './app.js';
+import { isHiddenCard, lastPushedPot, type PlayerView, type PublicSettings, type TableState } from '../shared/types.js';
+import { app, confirmKick, isHost, me, resetChips, send, serverNow } from './app.js';
 import { openBorrowPrompt } from './borrow.js';
 import { cardKey, chipStack, flyChips, handEl, resetCardMemory, ringEl, runCardAnimations, tickRings } from './cards.js';
 import { $, fmt, fmtSigned, h, prefersReducedMotion } from './dom.js';
 import { icon } from './icons.js';
-import { playAllIn, playChip, playDeal, playFlip, playKnock, playPayout, playShuffle } from './sound.js';
+import { ingest, onReveal, resetReveal, view } from './reveal.js';
+import { playAllIn, playChip, playDeal, playFlip, playKnock, playLose, playPayout, playShuffle, playWin } from './sound.js';
 
 let firstRender = true;
 let lastDeadline: number | null = null;
 let timerTotal = 1;
 let lastHand = -1;
+/** The state as it was last drawn (with hidden reveals left out), for working out what changed. */
+let drawn: TableState | null = null;
+
+/** After a pot is lit, the banner and the chips follow this much later. */
+const CELEBRATE_MS = 350;
 
 export function resetTable(): void {
   firstRender = true;
   lastDeadline = null;
   lastHand = -1;
+  drawn = null;
   resetCardMemory();
+  resetReveal();
 }
 
 // ------------------------------------------------------------------- texts
@@ -52,17 +60,12 @@ function inSentence(name: string): string {
   return /^(pair|straight|flush|full house|royal)/.test(lower) ? `a ${lower}` : lower;
 }
 
-/** The pot whose winners are shown right now: the last one pushed, or the main pot before that. */
-function currentPotIndex(s: TableState): number {
-  const pots = s.result?.pots ?? [];
-  return Math.min(Math.max(s.potsAwarded - 1, 0), pots.length - 1);
-}
-
-/** "Alex wins 240 with a flush, ace high", or "Alex and Sam split 240 with ...". */
+/** "Alex wins 240 with a flush, ace high", or "Alex and Sam split 240 with ...". Empty until the first pot is lit. */
 function bannerText(s: TableState): string {
   const r = s.result;
   if (!r || r.pots.length === 0) return '';
-  const i = currentPotIndex(s);
+  const i = lastPushedPot(r.pots.length, s.potsAwarded);
+  if (i < 0) return '';
   const pot = r.pots[i]!;
   if (!r.showdown) return `${namesOf(s, pot.winners)} wins ${fmt(r.pots.reduce((sum, p) => sum + p.amount, 0))}`;
   const which = r.pots.length === 1 ? '' : i === 0 ? ' the main pot' : ` side pot ${i}`;
@@ -87,18 +90,37 @@ function pillText(s: TableState, self: PlayerView): { text: string; tone: '' | '
 
 // ------------------------------------------------------------------- plates
 
-function winningKeys(s: TableState): Set<string> {
-  const r = s.result;
-  if (!r || !r.showdown || r.pots.length === 0) return new Set();
-  return new Set(r.pots[currentPotIndex(s)]!.cards.map(cardKey));
+/** The pot being lit right now: who won it and which five cards each of them wins with. */
+interface Spotlight {
+  winners: Set<string>;
+  /** Each winner's own five cards. A winner's other cards, and every loser's cards, step back. */
+  fives: Map<string, Set<string>>;
+  /** The board cards that are part of any winner's five. */
+  board: Set<string>;
+  /** Hands that went to showdown; false after a fold win, where nothing is shown. */
+  showdown: boolean;
 }
 
-/** Marks the winning five cards and dims the others once a showdown is decided. */
-function markWinners(row: HTMLElement, keys: Set<string>): void {
-  if (keys.size === 0) return;
+function spotlight(s: TableState): Spotlight | null {
+  const r = s.result;
+  if (!r) return null;
+  const pot = r.pots[lastPushedPot(r.pots.length, s.potsAwarded)];
+  if (!pot) return null;
+  const fives = new Map(pot.hands.map((hand) => [hand.playerId, new Set(hand.cards.map(cardKey))]));
+  const board = new Set<string>();
+  for (const five of fives.values()) for (const key of five) board.add(key);
+  return { winners: new Set(pot.winners), fives, board, showdown: r.showdown };
+}
+
+/** Lifts and lights the cards in `lit` and dims the rest of the row. Nothing changes without a spotlight. */
+function markCards(row: HTMLElement, spot: Spotlight | null, lit: Set<string> | undefined): void {
+  if (!spot?.showdown) return;
   for (const el of row.querySelectorAll<HTMLElement>('.card')) {
-    el.classList.toggle('win-card', el.dataset.card !== undefined && keys.has(el.dataset.card));
-    el.classList.toggle('dim-card', el.dataset.card !== undefined && !keys.has(el.dataset.card));
+    const key = el.dataset.card;
+    if (key === undefined) continue; // a face-down card
+    const on = lit?.has(key) ?? false;
+    el.classList.toggle('win-card', on);
+    el.classList.toggle('dim-card', !on);
   }
 }
 
@@ -149,12 +171,18 @@ function actionPill(s: TableState, p: PlayerView): HTMLElement {
   return blank;
 }
 
-function hasWon(s: TableState, id: string): boolean {
-  return !!s.result && s.potsAwarded > 0 && s.result.pots.slice(0, s.potsAwarded).some((pot) => pot.winners.includes(id));
+/** Won the pot that is lit now. */
+function hasWon(spot: Spotlight | null, id: string): boolean {
+  return !!spot && spot.winners.has(id);
+}
+
+/** Still in at a showdown but not a winner of the pot that is lit now. */
+function hasLost(s: TableState, spot: Spotlight | null, p: PlayerView): boolean {
+  return !!spot?.showdown && p.inHand && !p.folded && !spot.winners.has(p.id) && s.phase !== 'waiting';
 }
 
 /** One nameplate in the top strip: name, tags and timer, the action pill, chips, and the cards under it. */
-function plateEl(s: TableState, p: PlayerView, counts: Counts, win: Set<string>): HTMLElement {
+function plateEl(s: TableState, p: PlayerView, counts: Counts, spot: Spotlight | null): HTMLElement {
   const plate = h('div', 'plate');
   plate.dataset.id = p.id;
   const turn = s.turn === p.id;
@@ -162,7 +190,8 @@ function plateEl(s: TableState, p: PlayerView, counts: Counts, win: Set<string>)
   if (p.folded) plate.classList.add('folded');
   if (!p.connected) plate.classList.add('away');
   if (!p.inHand) plate.classList.add('idle');
-  if (hasWon(s, p.id)) plate.classList.add('winner');
+  if (hasWon(spot, p.id)) plate.classList.add('winner');
+  else if (hasLost(s, spot, p)) plate.classList.add('lost');
 
   const box = h('div', 'plate-box');
   const head = h('div', 'plate-head');
@@ -202,7 +231,7 @@ function plateEl(s: TableState, p: PlayerView, counts: Counts, win: Set<string>)
   const { el, added, flipped } = handEl(`seat:${p.id}`, p.cards, !firstRender);
   counts.added += added;
   counts.flipped += flipped;
-  markWinners(el, win);
+  markCards(el, spot, spot?.fives.get(p.id));
   hand.append(el);
   if (p.cards.length === 0) hand.classList.add('empty');
   else if (p.cards.some((c) => !isHiddenCard(c))) hand.classList.add('face-up');
@@ -236,10 +265,10 @@ function opponents(s: TableState, self: PlayerView): PlayerView[] {
 }
 
 /** The nameplates along the top, and under each, in the felt, the chips that player has in front. */
-function renderOpponents(s: TableState, self: PlayerView, counts: Counts, win: Set<string>): void {
+function renderOpponents(s: TableState, self: PlayerView, counts: Counts, spot: Spotlight | null): void {
   const list = opponents(s, self);
   $('screen-table').style.setProperty('--n', String(Math.max(1, list.length)));
-  $('opponents').replaceChildren(...list.map((p) => plateEl(s, p, counts, win)));
+  $('opponents').replaceChildren(...list.map((p) => plateEl(s, p, counts, spot)));
   $('bets').replaceChildren(
     ...list.map((p) => {
       const cell = h('div', 'bet-cell');
@@ -256,11 +285,12 @@ function renderOpponents(s: TableState, self: PlayerView, counts: Counts, win: S
 
 // ------------------------------------------------------------------ middle
 
-function renderCenter(s: TableState, self: PlayerView, counts: Counts, win: Set<string>): void {
+function renderCenter(s: TableState, self: PlayerView, counts: Counts, spot: Spotlight | null): void {
   const board = $('board');
-  const { el, added } = handEl('board', s.board, !firstRender);
+  // Board cards flip over one at a time as the table reveals them.
+  const { el, added } = handEl('board', s.board, !firstRender, true);
   counts.added += added;
-  markWinners(el, win);
+  markCards(el, spot, spot?.board);
   // Five slots, so the board does not jump as cards arrive.
   const slots = h('div', 'board-slots');
   for (let i = s.board.length; i < 5; i++) slots.append(h('span', 'slot'));
@@ -291,7 +321,11 @@ function renderCenter(s: TableState, self: PlayerView, counts: Counts, win: Set<
   const text = s.phase === 'showdown' || s.phase === 'hand_over' ? bannerText(s) : '';
   if (banner.textContent !== text) {
     banner.textContent = text;
-    if (text && !firstRender) banner.animate([{ opacity: 0, transform: 'scale(0.9)' }, { opacity: 1, transform: 'none' }], { duration: 260 });
+    if (text && !firstRender) {
+      // At showdown the banner follows the glow a moment later; after a fold win it comes at once.
+      const frames = prefersReducedMotion() ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: 'scale(0.9)' }, { opacity: 1, transform: 'none' }];
+      banner.animate(frames, { duration: 260, delay: s.result?.showdown ? CELEBRATE_MS : 0, fill: 'backwards' });
+    }
   }
   banner.hidden = text === '';
   $('felt-rules').textContent = rulesText(s.settings);
@@ -308,12 +342,13 @@ function toolButton(label: string, title: string, onClick: () => void, cls = 'li
 }
 
 /** My seat in the dock: name, chips, earnings, hand strength and Sit out beside my two large cards. */
-function renderMe(s: TableState, self: PlayerView, counts: Counts, win: Set<string>): void {
+function renderMe(s: TableState, self: PlayerView, counts: Counts, lit: Spotlight | null): void {
   const spot = $('my-spot');
   const turn = s.turn === self.id;
   spot.classList.toggle('is-turn', turn);
   spot.classList.toggle('folded', self.folded);
-  spot.classList.toggle('winner', hasWon(s, self.id));
+  spot.classList.toggle('winner', hasWon(lit, self.id));
+  spot.classList.toggle('lost', !hasWon(lit, self.id) && hasLost(s, lit, self));
 
   // My chips in front of me sit on the felt, above my cards.
   const myBet = $('my-bet');
@@ -376,7 +411,7 @@ function renderMe(s: TableState, self: PlayerView, counts: Counts, win: Set<stri
   const mine = s.you?.cards ?? [];
   const { el, added } = handEl('me', mine, !firstRender);
   counts.added += added;
-  markWinners(el, win);
+  markCards(el, lit, lit?.fives.get(self.id));
   box.append(el);
   if (mine.length === 0) box.classList.add('empty');
 
@@ -395,7 +430,6 @@ function playChanges(s: TableState, prev: TableState | null, counts: Counts): vo
     playShuffle();
     return;
   }
-  if (s.potsAwarded > prev.potsAwarded && s.hand === prev.hand) playPayout();
   const before = new Map(prev.players.map((p) => [p.id, p.lastAction]));
   for (const p of s.players) {
     const was = before.get(p.id);
@@ -407,22 +441,39 @@ function playChanges(s: TableState, prev: TableState | null, counts: Counts): vo
   }
 }
 
-/** Each pot slides to its winners as it is pushed. */
-function animatePots(s: TableState, prev: TableState | null): void {
-  if (!prev || prev.hand !== s.hand || !s.result || s.potsAwarded <= prev.potsAwarded) return;
-  const pot = s.result.pots[s.potsAwarded - 1];
-  if (!pot) return;
-  for (const id of pot.winners) {
-    const target =
-      id === app.myId ? document.querySelector('#my-spot .hand-box') : document.querySelector(`#opponents .plate[data-id="${id}"]`);
-    flyChips($('pots'), target, pot.amount);
+/**
+ * A pot has just been lit: the pot slides to its winners, with the chips sound, a moment after the glow.
+ * The first pot of a hand also plays my win or lose jingle (only for hands I played, as before).
+ */
+function pushPot(s: TableState, prev: TableState, from: DOMRect | null): void {
+  const r = s.result;
+  const pot = r?.pots[lastPushedPot(r?.pots.length ?? 0, s.potsAwarded)];
+  if (!r || !pot) return;
+  if (prev.potsAwarded === 0) {
+    const mine = r.players.find((x) => x.playerId === app.myId);
+    if (mine && mine.net > 0) playWin();
+    else if (mine && mine.net < 0) playLose();
   }
+  window.setTimeout(
+    () => {
+      playPayout();
+      for (const id of pot.winners) {
+        const target =
+          id === app.myId ? document.querySelector('#my-spot .hand-box') : document.querySelector(`#opponents .plate[data-id="${id}"]`);
+        flyChips(from, target, pot.amount);
+      }
+    },
+    r.showdown ? CELEBRATE_MS : 0,
+  );
 }
 
 // -------------------------------------------------------------------- main
 
-export function renderTable(s: TableState, self: PlayerView): void {
-  const prev = app.prevState;
+/** Draws the table. Board cards, hands and hand names that are still to be revealed are left out. */
+export function renderTable(real: TableState, self: PlayerView): void {
+  ingest(real, app.myId);
+  const s = view(real, app.myId);
+  const prev = drawn;
   if (s.hand !== lastHand) {
     // A new hand: every card on the table is new again.
     if (lastHand !== -1) resetCardMemory();
@@ -434,19 +485,30 @@ export function renderTable(s: TableState, self: PlayerView): void {
     lastDeadline = s.deadline;
     timerTotal = s.deadline ? Math.max(1, s.deadline - s.serverNow) : 1;
   }
-  const win = s.phase === 'showdown' || s.phase === 'hand_over' ? winningKeys(s) : new Set<string>();
+  const spot = spotlight(s);
+  const pushed = !!prev && prev.hand === s.hand && s.potsAwarded > prev.potsAwarded;
+  // Where the pot that is about to leave sits now; it is gone from the felt once the table is drawn again.
+  const from = pushed ? ($('pots').lastElementChild ?? $('pots')).getBoundingClientRect() : null;
 
-  renderCenter(s, self, counts, win);
-  renderOpponents(s, self, counts, win);
-  renderMe(s, self, counts, win);
-  $('felt').classList.toggle('show-results', win.size > 0);
+  renderCenter(s, self, counts, spot);
+  renderOpponents(s, self, counts, spot);
+  renderMe(s, self, counts, spot);
+  $('felt').classList.toggle('show-results', !!spot?.showdown);
 
   runCardAnimations();
   playChanges(s, prev, counts);
-  animatePots(s, prev);
+  if (pushed && prev) pushPot(s, prev, from);
+  drawn = s;
   firstRender = false;
   tick();
 }
+
+// A reveal timer fired: draw the same state again with one more card or hand on show.
+onReveal(() => {
+  const s = app.state;
+  const self = me();
+  if (s && self && s.started) renderTable(s, self);
+});
 
 // -------------------------------------------------------------------- timer
 

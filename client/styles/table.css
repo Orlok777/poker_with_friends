@@ -85,7 +85,8 @@
 }
 
 .plate.folded .plate-box,
-.plate.idle .plate-box {
+.plate.idle .plate-box,
+.plate.lost .plate-box {
   opacity: 0.62;
 }
 
@@ -168,13 +169,24 @@
   background: var(--accent);
 }
 
-/* At showdown the pill names the hand. */
+/* At showdown the pill names the hand. A long name ("Full house, kings over sevens") wraps to two lines
+   instead of being cut off, with room for two lines kept so the plates do not jump. */
 .act-pill.hand {
-  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: auto;
+  min-height: 22px;
+  padding: 2px 6px;
   font-size: 12px;
+  line-height: 13px;
   letter-spacing: 0;
   text-transform: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
   color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--r-sm);
 }
 
 .act-pill.blank {
@@ -580,6 +592,27 @@
   opacity: 0.45;
 }
 
+/* The back of a card while it turns over: it covers the face until the card is edge-on. */
+.flip-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: #1f2a44;
+  border: calc(var(--cw, 52px) * 0.05) solid var(--card-face);
+  border-radius: inherit;
+}
+
+.flip-cover::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 3px;
+  border: 1px solid rgba(245, 185, 66, 0.35);
+  background:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.06) 0 2px, transparent 2px 9px),
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.06) 0 2px, transparent 2px 9px);
+}
+
 /* ------------------------------------------------------------------ rings */
 
 .ring {
@@ -847,6 +880,10 @@
     0 0 28px rgba(34, 197, 94, 0.3);
 }
 
+.my-spot.lost .me-info {
+  opacity: 0.62;
+}
+
 .my-spot.folded .hand {
   opacity: 0.4;
   transform: translateY(8px);
@@ -1087,7 +1124,10 @@
   }
 
   .act-pill.hand {
+    min-height: 18px;
+    padding: 2px 5px;
     font-size: 11px;
+    line-height: 12px;
   }
 
   /* No empty line on a phone: the grid rows keep the plates the same height anyway. */

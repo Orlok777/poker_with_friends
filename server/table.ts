@@ -24,6 +24,7 @@ import {
   type TableState,
   type YouView,
 } from '../shared/types.js';
+import { PACING, handsRevealMs, leadMs, streetRevealMs } from '../shared/pacing.js';
 import { Deck, mulberry32, randomSeed } from './deck.js';
 import { HoldemHand, type HandOutcome } from './game.js';
 import { bestHand, inSentence } from './hand.js';
@@ -35,26 +36,41 @@ export interface Connection {
   close(): void;
 }
 
-/** Pause after a hand that went to showdown, before the next hand. */
-export const SHOWDOWN_PAUSE_MS = 4000;
 /** Pause after a hand won because everyone else folded. */
 export const FOLD_WIN_PAUSE_MS = 2000;
+/** How long the result stays on screen once the last pot has gone to its winner. */
+export const RESULT_LOOK_MS = 3000;
+/** Time between pots being lit and pushed at showdown (side pots first, the main pot last). */
+export const POT_STEP_MS = 2000;
+
+/**
+ * The pause after a showdown, worked out in one place. It starts when the showdown is sent to the clients:
+ * they first show the board cards they have not shown yet (`boardCards`) and flip the hands that are
+ * newly face up (`hands`), wait a beat, then light the winners of each pot (`pots`), and the result then
+ * stays on screen for RESULT_LOOK_MS. The timings are those in shared/pacing.ts, which the browser plays.
+ */
+export function showdownPlan(boardCards: number, hands: number, pots = 1): { firstPotMs: number; totalMs: number } {
+  const reveal = streetRevealMs(boardCards) + handsRevealMs(hands) + PACING.afterHandsMs;
+  return { firstPotMs: reveal, totalMs: reveal + Math.max(0, pots - 1) * POT_STEP_MS + RESULT_LOOK_MS };
+}
 
 export interface Timing {
   /** Gap between hole cards being dealt. */
   dealMs: number;
   /** Pause before the flop, turn and river. */
   streetMs: number;
-  /** Pause between streets when everyone is all in and the board is run out. */
+  /** The pause people see between the last card of one street flipping and the next street's first card, in an all-in runout. */
   runoutMs: number;
   /** Gap between pots being pushed to their winners at showdown. */
   potMs: number;
-  /** How long results stay on screen after a showdown. */
+  /** How long results stay on screen after the last pot of a showdown has been pushed. */
   showdownMs: number;
   /** How long results stay on screen after a hand won without a showdown. */
   foldWinMs: number;
   /** How long a disconnected player's seat is held. */
   holdMs: number;
+  /** Multiplies the time the clients need to show cards (1 normally; tests use 0 to skip it). */
+  revealScale: number;
   /** Test override for the turn timer; ignored when the host turned the turn timer off. */
   turnMs?: number;
 }
@@ -62,11 +78,12 @@ export interface Timing {
 export const DEFAULT_TIMING: Timing = {
   dealMs: 300,
   streetMs: 600,
-  runoutMs: 1000,
-  potMs: 900,
-  showdownMs: SHOWDOWN_PAUSE_MS,
+  runoutMs: PACING.streetGapMs,
+  potMs: POT_STEP_MS,
+  showdownMs: RESULT_LOOK_MS,
   foldWinMs: FOLD_WIN_PAUSE_MS,
   holdMs: 20_000,
+  revealScale: 1,
 };
 
 export interface TableOptions {
@@ -146,7 +163,12 @@ export class Table {
   private readonly revealed = new Set<string>();
   private outcome: HandOutcome | null = null;
   private result: HandResult | null = null;
+  /** How many pots have been pushed to their winners, last side pot first and the main pot last. */
   private potsAwarded = 0;
+  /** Board cards in the last table_state sent, so the showdown knows how many the clients have yet to show. */
+  private boardSent = 0;
+  /** Cards of the street dealt in the step now being handled, for the runout pacing. */
+  private justDealt = 0;
 
   private readonly store: PlayerStore;
   private readonly hostToken: string;
@@ -620,6 +642,8 @@ export class Table {
     this.outcome = null;
     this.result = null;
     this.potsAwarded = 0;
+    this.boardSent = 0;
+    this.justDealt = 0;
   }
 
   /** Starts a hand if the table is idle and at least two players can play. */
@@ -711,6 +735,8 @@ export class Table {
   /** Looks at the engine after every change and moves the hand on. */
   private afterChange(): void {
     const eng = this.eng!;
+    const dealt = this.justDealt;
+    this.justDealt = 0;
     this.syncChips();
     this.turn = null;
     this.deadline = null;
@@ -724,9 +750,9 @@ export class Table {
       }
       case 'street_over': {
         const runout = eng.isRunout();
-        if (runout) this.revealAll(false);
+        const flipped = runout ? this.revealAll(false) : 0;
         this.broadcast();
-        this.setFlow(() => this.dealStreet(), runout ? this.timing.runoutMs : this.timing.streetMs);
+        this.setFlow(() => this.dealStreet(), runout ? this.runoutWaitMs(flipped, dealt) : this.timing.streetMs);
         return;
       }
       case 'showdown':
@@ -742,33 +768,58 @@ export class Table {
     const eng = this.eng!;
     const cards = eng.dealNext();
     this.phase = eng.street;
+    this.justDealt = cards.length;
     const label = eng.street.charAt(0).toUpperCase() + eng.street.slice(1);
     this.addLog(`${label}: ${cards.map(cardText).join(' ')}`);
     this.afterChange();
   }
 
-  /** Turns every hand still in face up. At showdown the log names the hands, in a runout it shows the cards. */
-  private revealAll(atShowdown: boolean): void {
+  /** The time the clients need to show cards, which tests can shrink with `revealScale`. */
+  private reveal(ms: number): number {
+    return Math.round(ms * this.timing.revealScale);
+  }
+
+  /**
+   * How long to wait before dealing the next street of an all-in runout. The clients first flip the hands
+   * that just turned face up (`flipped`) and the street just dealt (`dealt` cards), and then leave
+   * `runoutMs` between that street and the next one; the beat before a turn or river is part of that pause.
+   */
+  private runoutWaitMs(flipped: number, dealt: number): number {
+    const next = this.eng!.street === 'preflop' ? 3 : 1;
+    const busy = this.reveal(handsRevealMs(flipped) + streetRevealMs(dealt));
+    return Math.max(0, busy + this.timing.runoutMs - this.reveal(leadMs(next)));
+  }
+
+  /** Turns every hand still in face up, and returns how many were newly turned. At showdown the log names the hands, in a runout it shows the cards. */
+  private revealAll(atShowdown: boolean): number {
     const eng = this.eng!;
+    let flipped = 0;
     for (const hp of eng.live()) {
       const p = this.players.get(hp.id);
       const name = p?.name ?? 'A player';
+      const isNew = !this.revealed.has(hp.id);
       if (atShowdown) {
         this.addLog(`${name} shows ${inSentence(bestHand([...hp.hole, ...eng.board]).name)}`);
-      } else if (!this.revealed.has(hp.id)) {
+      } else if (isNew) {
         this.addLog(`${name} shows ${hp.hole.map(cardText).join(' ')}`);
       }
+      if (isNew) flipped++;
       this.revealed.add(hp.id);
     }
+    return flipped;
   }
 
   private showdown(): void {
+    const eng = this.eng!;
+    // What the clients have not shown yet: a river that was dealt in this same step, and the hands.
+    const boardCards = eng.board.length - this.boardSent;
     this.phase = 'showdown';
-    this.revealAll(true);
+    const flipped = this.revealAll(true);
     this.settle();
     this.broadcast();
-    // The hands stay face up for a moment before the first pot moves.
-    this.setFlow(() => this.awardNextPot(), this.timing.potMs);
+    // The clients reveal the cards and flip the hands one by one before the first pot is lit.
+    const plan = showdownPlan(boardCards, flipped, this.result!.pots.length);
+    this.setFlow(() => this.awardNextPot(), this.reveal(plan.firstPotMs));
   }
 
   private foldWin(): void {
@@ -802,6 +853,14 @@ export class Table {
         winners: [...pot.winners],
         handName: pot.handName,
         cards: pot.cards.map((c) => ({ ...c })),
+        // Each winner's own best five: split pots can be won with different cards.
+        hands: outcome.showdown
+          ? pot.winners.map((id) => ({
+              playerId: id,
+              handName: outcome.hands[id]!.name,
+              cards: outcome.hands[id]!.cards.map((c) => ({ ...c })),
+            }))
+          : [],
       })),
       players: eng.players.map((hp) => ({
         playerId: hp.id,
@@ -820,7 +879,8 @@ export class Table {
       this.setFlow(() => this.nextHand(), this.timing.showdownMs);
       return;
     }
-    const i = this.potsAwarded;
+    // Side pots go first and the main pot last, so the biggest prize is the end of the show.
+    const i = result.pots.length - 1 - this.potsAwarded;
     const pot = result.pots[i]!;
     const names = pot.winners.map((id) => this.players.get(id)?.name ?? 'A player');
     const which = result.pots.length === 1 ? '' : i === 0 ? ' the main pot' : ` side pot ${i}`;
@@ -828,8 +888,15 @@ export class Table {
     const who = names.length === 1 ? `${names[0]} wins` : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} split`;
     this.addLog(`${who}${which} ${n(pot.amount)}${how}`);
     this.potsAwarded++;
+    if (this.potsAwarded < result.pots.length) {
+      this.broadcast();
+      this.setFlow(() => this.awardNextPot(), this.timing.potMs);
+      return;
+    }
+    // The last pot (the main pot) is on its way: the result stays on screen from here, not a pot step longer.
+    this.phase = 'hand_over';
     this.broadcast();
-    this.setFlow(() => this.awardNextPot(), this.timing.potMs);
+    this.setFlow(() => this.nextHand(), this.timing.showdownMs);
   }
 
   private nextHand(): void {
@@ -954,8 +1021,9 @@ export class Table {
   private unawarded(id: string): number {
     if (!this.outcome) return 0;
     let sum = 0;
+    const waiting = this.outcome.pots.length - this.potsAwarded; // the pots still in the middle are the first ones
     this.outcome.pots.forEach((pot, i) => {
-      if (i >= this.potsAwarded) sum += pot.shares[id] ?? 0;
+      if (i < waiting) sum += pot.shares[id] ?? 0;
     });
     return sum;
   }
@@ -1011,7 +1079,7 @@ export class Table {
   private potsView(): PotView[] {
     if (!this.eng || this.phase === 'waiting') return [];
     if (this.outcome) {
-      return this.outcome.pots.slice(this.potsAwarded).map((pot) => ({ amount: pot.amount, eligible: [...pot.winners] }));
+      return this.outcome.pots.slice(0, this.outcome.pots.length - this.potsAwarded).map((pot) => ({ amount: pot.amount, eligible: [...pot.winners] }));
     }
     return this.eng.pots();
   }
@@ -1047,6 +1115,7 @@ export class Table {
   /** Sends every joined connection its own view of the table. */
   private broadcast(): void {
     if (this.closed) return;
+    this.boardSent = this.eng && this.phase !== 'waiting' ? this.eng.board.length : 0;
     for (const [conn, id] of this.bound) {
       try {
         conn.send(this.snapshot(id));

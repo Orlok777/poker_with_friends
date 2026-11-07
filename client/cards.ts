@@ -1,6 +1,7 @@
 // Cards, chips and countdown rings, plus their animations.
 
 import { isHiddenCard, type Card, type CardView } from '../shared/types.js';
+import { PACING } from '../shared/pacing.js';
 import { $, fmt, h, prefersReducedMotion } from './dom.js';
 
 const SUIT_CHAR = { S: '♠', H: '♥', D: '♦', C: '♣' } as const;
@@ -35,6 +36,8 @@ export function cardEl(card: CardView): HTMLElement {
 const shown = new Map<string, boolean[]>();
 const toDeal: HTMLElement[] = [];
 const toFlip: HTMLElement[] = [];
+/** Cards revealed one at a time (the board): a short flip face down to face up instead of a slide from the deck. */
+const toReveal: HTMLElement[] = [];
 
 /** Forgets what was on screen, e.g. when a new hand starts or after leaving the table. */
 export function resetCardMemory(): void {
@@ -44,8 +47,14 @@ export function resetCardMemory(): void {
 /**
  * Cards in a row. New cards are queued to slide in from the deck, and cards that were face down
  * and are now face up are queued to flip. Returns the row and how many cards are new and flipped.
+ * With `reveal`, new cards flip over where they lie instead of sliding in from the deck.
  */
-export function handEl(key: string, cards: CardView[], animate: boolean): { el: HTMLElement; added: number; flipped: number } {
+export function handEl(
+  key: string,
+  cards: CardView[],
+  animate: boolean,
+  reveal = false,
+): { el: HTMLElement; added: number; flipped: number } {
   const row = h('div', 'hand');
   const before = shown.get(key) ?? [];
   let added = 0;
@@ -53,7 +62,7 @@ export function handEl(key: string, cards: CardView[], animate: boolean): { el: 
   cards.forEach((card, i) => {
     const el = cardEl(card);
     if (animate && i >= before.length) {
-      toDeal.push(el);
+      (reveal ? toReveal : toDeal).push(el);
       added++;
     } else if (animate && before[i] === true && !isHiddenCard(card)) {
       toFlip.push(el);
@@ -69,10 +78,12 @@ export function handEl(key: string, cards: CardView[], animate: boolean): { el: 
 export function runCardAnimations(): void {
   const deal = toDeal.splice(0);
   const flip = toFlip.splice(0);
+  const reveal = toReveal.splice(0);
   if (prefersReducedMotion()) {
-    for (const el of [...deal, ...flip]) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150 });
+    for (const el of [...deal, ...flip, ...reveal]) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150 });
     return;
   }
+  for (const el of reveal) flipOver(el);
   const deck = $('deck').getBoundingClientRect();
   deal.forEach((el, i) => {
     const r = el.getBoundingClientRect();
@@ -88,15 +99,32 @@ export function runCardAnimations(): void {
       { duration: 340, delay: i * 70, easing: EASE, fill: 'backwards' },
     );
   });
-  for (const el of flip) {
+  for (const el of flip) flipOver(el);
+}
+
+/** A card turns from its back to its face: the back turns edge-on, then the face turns up. One flip is PACING.flipMs. */
+function flipOver(el: HTMLElement): void {
+  const half = PACING.flipMs / 2;
+  const cover = h('span', 'flip-cover');
+  el.append(cover);
+  const first = el.animate(
+    [{ transform: 'perspective(600px) rotateY(0deg)' }, { transform: 'perspective(600px) rotateY(90deg)' }],
+    { duration: half, easing: 'ease-in', fill: 'forwards' },
+  );
+  const done = () => {
+    first.cancel();
+    cover.remove();
     el.animate(
       [
         { transform: 'perspective(600px) rotateY(-90deg)', filter: 'brightness(0.7)' },
         { transform: 'none', filter: 'none' },
       ],
-      { duration: 300, easing: EASE },
+      { duration: half, easing: EASE },
     );
-  }
+  };
+  first.onfinish = done;
+  // A card that is replaced while it turns must not keep its back.
+  first.oncancel = () => cover.remove();
 }
 
 // ------------------------------------------------------------------- chips
@@ -139,9 +167,9 @@ export function slideFrom(el: HTMLElement, from: Element | null): void {
 }
 
 /** A chip flies from one element to another and disappears: a pot pushed to its winner. */
-export function flyChips(from: Element | null, to: Element | null, amount: number): void {
+export function flyChips(from: Element | DOMRect | null, to: Element | null, amount: number): void {
   if (!from || !to || prefersReducedMotion()) return;
-  const a = from.getBoundingClientRect();
+  const a = from instanceof DOMRect ? from : from.getBoundingClientRect();
   const b = to.getBoundingClientRect();
   if (a.width === 0 || b.width === 0) return;
   const chip = h('span', `chip-disc flying ${chipColor(amount)}`);

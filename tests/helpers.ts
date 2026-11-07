@@ -19,6 +19,7 @@ export const FAST: Partial<Timing> = {
   runoutMs: 5,
   potMs: 5,
   showdownMs: 60,
+  revealScale: 0,
   foldWinMs: 60,
   holdMs: 400,
   turnMs: 1500,

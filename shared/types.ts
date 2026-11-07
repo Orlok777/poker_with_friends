@@ -158,13 +158,31 @@ export interface PotView {
   eligible: string[];
 }
 
+/** One winner's best five cards. Hands are public at showdown, so this leaks nothing. */
+export interface WinningHand {
+  playerId: string;
+  handName: string;
+  /** The best five of the player's two hole cards and the board. */
+  cards: Card[];
+}
+
 export interface PotResultView {
   amount: number;
   winners: string[];
   /** Null when everyone else folded. */
   handName: string | null;
-  /** The five cards of the winning hand; empty after a fold win. */
+  /** The five cards of the (first) winning hand; empty after a fold win. */
   cards: Card[];
+  /** Each winner's own best five cards, in the same order as `winners`; empty after a fold win. */
+  hands: WinningHand[];
+}
+
+/**
+ * Pots go to their winners one at a time, last side pot first and the main pot last. `potsAwarded` counts
+ * how many have gone; this is the index in `result.pots` of the one pushed most recently, or -1 for none.
+ */
+export function lastPushedPot(total: number, potsAwarded: number): number {
+  return potsAwarded <= 0 ? -1 : Math.max(total - potsAwarded, 0);
 }
 
 export interface NetResult {

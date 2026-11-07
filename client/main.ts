@@ -5,7 +5,8 @@ import { clearBusy, initControls, renderControls } from './controls.js';
 import { $, storageGet, storageSet } from './dom.js';
 import { hydrateIcons, icon } from './icons.js';
 import { initPanels, renderLog, renderRules, resetPanels } from './panels.js';
-import { isMuted, playLose, playWin, setMuted, unlockAudio } from './sound.js';
+import { syncNextState } from './reveal.js';
+import { isMuted, setMuted, unlockAudio } from './sound.js';
 import { renderTable, resetTable } from './table.js';
 import { initWaiting, renderWaiting, resyncSettings } from './waiting.js';
 
@@ -124,6 +125,7 @@ function handle(msg: ServerMsg): void {
     case 'joined': {
       app.joined = true;
       app.myId = msg.playerId;
+      syncNextState(); // a refresh or reconnect shows the table as it is, without replaying the reveal
       lostNote = null;
       if (joinAttempt) {
         saveSession({ username: joinAttempt.username, token: msg.reconnectToken, password: joinAttempt.password });
@@ -139,13 +141,10 @@ function handle(msg: ServerMsg): void {
       render();
       return;
     }
-    case 'hand_result': {
-      // Jingles only for my own hands. The chips sound plays as each pot is pushed.
-      const mine = msg.players.find((r) => r.playerId === app.myId);
-      if (mine && mine.net > 0) playWin();
-      else if (mine && mine.net < 0) playLose();
+    case 'hand_result':
+      // Sent at the start of a showdown, before the table has revealed anything. The win and lose jingles
+      // and the chips sounds play from the table state as each pot is lit (see table.ts), not from here.
       return;
-    }
     case 'kicked': {
       kicked = true;
       app.joined = false;

@@ -124,7 +124,9 @@ The server owns the current phase, and clients only display it.
 | `showdown` | Remaining hands revealed, pots awarded one at a time, winning five cards highlighted |
 | `hand_over` | Results stay on screen, then the next hand starts |
 
-- Pause after a showdown: 4 s. Pause after a hand won without a showdown: 2 s. Both are named constants in `server/table.ts` (`SHOWDOWN_PAUSE_MS`, `FOLD_WIN_PAUSE_MS`).
+- Pause after a hand won without a showdown: 2 s (`FOLD_WIN_PAUSE_MS` in `server/table.ts`).
+- Pause after a showdown: computed by `showdownPlan(boardCards, hands, pots)` at the top of `server/table.ts` from the time the browsers need to show the result, plus 3 s to look at it (`RESULT_LOOK_MS`). The browser pace is in `shared/pacing.ts`: the flop's cards flip 500 ms apart (350 ms per flip), a turn or river card waits a 600 ms beat, streets shown one after another in an all-in runout are 1 s apart, then the hands flip one player at a time 800 ms apart (seat order from the left of the button, each with its hand name), a 600 ms beat, and then each pot's winners are lit, side pots first and the main pot last (2 s per pot). About 4.75 s for two players and 7.95 s for six, when the board is already out.
+- Hands, board cards and hand names are shown in that order even when one `table_state` carries several of them. The first state after a page load or reconnect is shown as it is, without replaying.
 - Only one player acts at a time, in seat order, and the turn timer restarts for every action.
 
 ## Client/server message protocol
