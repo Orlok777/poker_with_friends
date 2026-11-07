@@ -11,14 +11,14 @@ npm install
 npm start
 ```
 
-`npm start` builds the page and starts the server on port 3001 (not 3000, so Blackjack with Friends can run on the same PC at the same time). After a few seconds you will see something like:
+`npm start` builds the page and starts the server on port 3000. After a few seconds you will see something like:
 
 ```
 Host link (opens host controls, keep it to yourself):
-  http://localhost:3001/?host=Zx3k...
+  http://localhost:3000/?host=Zx3k...
 
 Share one of these with players on your network:
-  http://192.168.1.42:3001
+  http://192.168.1.42:3000
 ```
 
 - Your browser opens the **host link** by itself. That link gives you the host controls (settings, Start, kick). **Do not share it.** If you close the tab, open the same link again to get the controls back.
@@ -40,7 +40,7 @@ Chips are saved per username in `data\players.json`. Delete that file to give ev
 ### Same Wi-Fi or LAN
 
 1. The server prints your LAN addresses when it starts. To find the address yourself, open a terminal and run `ipconfig`. Look for **IPv4 Address** under your active adapter (Wi-Fi or Ethernet), for example `192.168.1.42`.
-2. Players open `http://192.168.1.42:3001` (your address, then `:3001`).
+2. Players open `http://192.168.1.42:3000` (your address, then `:3000`).
 3. The first time, Windows Firewall asks whether to let Node.js through. Tick **Private networks** and click **Allow access**. If you missed the prompt:
    - Open **Windows Security > Firewall & network protection > Allow an app through firewall**.
    - Click **Change settings**, find **Node.js JavaScript Runtime**, and tick **Private**.
@@ -50,8 +50,8 @@ Chips are saved per username in `data\players.json`. Delete that file to give ev
 ### Port forwarding (over the internet)
 
 1. Give your PC a fixed LAN address (or a DHCP reservation in your router) so the forward keeps pointing at it.
-2. In your router's settings, forward **TCP port 3001** to your PC's LAN address, port 3001. Every router words this differently; look for "Port forwarding" or "Virtual server".
-3. Click **Share** in the waiting room. The server looks up your public IP (it asks api.ipify.org), shows `http://YOUR_PUBLIC_IP:3001` and copies it to your clipboard. Send that link to players. (You can also search "what is my IP" and build the link yourself.) The link does not give host controls. If your router forwards a different outside port, change the port in the link.
+2. In your router's settings, forward **TCP port 3000** to your PC's LAN address, port 3000. Every router words this differently; look for "Port forwarding" or "Virtual server".
+3. Click **Share** in the waiting room. The server looks up your public IP (it asks api.ipify.org), shows `http://YOUR_PUBLIC_IP:3000` and copies it to your clipboard. Send that link to players. (You can also search "what is my IP" and build the link yourself.) The link does not give host controls. If your router forwards a different outside port, change the port in the link.
 4. Allow Node.js through the firewall for **Public networks** too, if your PC treats the network as public.
 
 Everything is sent unencrypted over plain `http`, and anyone who learns your address can try to join. Set a **table password** in the waiting room, and stop the server when you are done.
@@ -61,7 +61,7 @@ Everything is sent unencrypted over plain `http`, and anyone who learns your add
 1. Everyone, you included, installs [Tailscale](https://tailscale.com/download) and signs in.
 2. Share your tailnet with your friends (in the Tailscale admin page, invite them or share your PC with them).
 3. Find your Tailscale IP in the Tailscale app, or run `tailscale ip -4`. It looks like `100.x.y.z`.
-4. Players open `http://100.x.y.z:3001`.
+4. Players open `http://100.x.y.z:3000`.
 
 ### Tunnel with cloudflared (nothing for players to install)
 
@@ -69,7 +69,7 @@ Everything is sent unencrypted over plain `http`, and anyone who learns your add
 2. Start the game with `npm start` as usual, then in a second terminal run:
 
    ```
-   cloudflared tunnel --url http://localhost:3001
+   cloudflared tunnel --url http://localhost:3000
    ```
 
 3. It prints a public `https://something.trycloudflare.com` link. Share that link with players. The page works over `https`, and the game connects with `wss` automatically.
@@ -86,7 +86,7 @@ Everything is sent unencrypted over plain `http`, and anyone who learns your add
 
 ## Troubleshooting
 
-- **"Port 3001 is already in use"**: another program is using it. Close it, or start with a different port (see above).
+- **"Port 3000 is already in use"**: another program is using it. Close it, or start with a different port (see above).
 - **Players see "Connection lost"**: the server stopped or their network dropped. Chips are kept up to the last finished hand. Click **Retry**.
 - **Refreshing the page**: a player who refreshes within 20 seconds gets the same seat and the same cards back.
 - **`data\players.json` got damaged**: the server renames it to `players.json.bak`, prints a warning and starts with no saved players.

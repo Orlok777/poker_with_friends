@@ -17,7 +17,7 @@ This project starts as a copy of **Blackjack with Friends**, which already works
 
 ## Tech stack and project layout
 
-Same stack as the blackjack project: Node.js 20+, TypeScript everywhere, Express plus `ws`, Vite for the client, no frontend framework, Vitest for tests. `npm install && npm start` builds the client and starts the server on **port 3001** (not 3000, so both games can run on one PC at once). The `PORT` environment variable still overrides it.
+Same stack as the blackjack project: Node.js 20+, TypeScript everywhere, Express plus `ws`, Vite for the client, no frontend framework, Vitest for tests. `npm install && npm start` builds the client and starts the server on **port 3000**. The `PORT` environment variable still overrides it.
 
 ```
 /shared   types.ts      message and table-state types used by both sides
@@ -179,7 +179,7 @@ The join and waiting-room screens stay as they are, with the poker settings in t
 
 ## Hosting and connecting
 
-The same as the blackjack project, with port 3001 in place of 3000 everywhere in `HOSTING.md` and the startup log.
+The same as the blackjack project, (port 3000).
 
 ## Edge cases and disconnects
 
@@ -197,7 +197,7 @@ The same as the blackjack project, with port 3001 in place of 3000 everywhere in
 
 ## Phase 2: desktop app (build later)
 
-The same as the blackjack project's Phase 2 (one Windows Electron app with Host game and Join game, the chips file in the user-data folder, a portable `.exe` made with electron-builder), with port 3001 as the default.
+The same as the blackjack project's Phase 2 (one Windows Electron app with Host game and Join game, the chips file in the user-data folder, a portable `.exe` made with electron-builder), with port 3000 as the default.
 
 ## Out of scope for v1
 
@@ -216,7 +216,7 @@ Don't build any of these.
 
 Phase 1 is finished when every item below passes. Claude Code should check each one and report any it could not verify itself.
 
-- [ ] `npm install && npm start` works in a fresh copy on Windows, starts on port 3001, and prints the host link and LAN URLs
+- [ ] `npm install && npm start` works in a fresh copy on Windows, starts on port 3000, and prints the host link and LAN URLs
 - [ ] Hand evaluator tests pass for every hand category, kickers, exact ties, the wheel (A-2-3-4-5) and steel wheel, no wraparound straights, best 5 of 7, and the board playing for a split
 - [ ] Betting engine tests pass for blinds (including heads-up order), min bet, min raise, a short all in that does not reopen betting, the big blind option, uncalled bets returned, a fold win, side pots with three players all in for different amounts, a split pot with an odd chip, and an all-in runout
 - [ ] A chip-conservation test: across many random seeded hands, total chips at the table only change by borrowing
@@ -269,7 +269,7 @@ Work in this order:
    existing style. Use the screenshot script to check desktop and a
    390 px phone width.
 6. Rename blackjack to poker everywhere and update HOSTING.md for
-   port 3001.
+   port 3000.
 7. Go through the Done-when checklist. Run everything you can, then list
    what you could not verify and how I can check it by hand.
 

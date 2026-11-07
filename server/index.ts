@@ -17,7 +17,7 @@ import { PlayerStore } from './store.js';
 import { Table, type Connection, type Timing } from './table.js';
 
 export interface ServerOptions {
-  /** Port to listen on. 0 picks a free port. Default 3001. */
+  /** Port to listen on. 0 picks a free port. Default 3000. */
   port?: number;
   /** Folder for players.json. Default `./data`. */
   dataDir?: string;
@@ -103,7 +103,7 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
   // The public address players can use, once the router forwards our port. Cached so a few
   // clicks on the Share button make one outside request.
   const lookupIp = options.publicIpLookup ?? lookupPublicIp;
-  let listenPort = options.port ?? 3001;
+  let listenPort = options.port ?? 3000;
   let cachedIp: { ip: string; at: number } | null = null;
   app.get('/api/public-ip', async (_req, res) => {
     res.set('Cache-Control', 'no-store');
@@ -157,7 +157,7 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
 
   await new Promise<void>((resolveListen, rejectListen) => {
     httpServer.once('error', rejectListen);
-    httpServer.listen(options.port ?? 3001, '0.0.0.0', () => {
+    httpServer.listen(options.port ?? 3000, '0.0.0.0', () => {
       httpServer.off('error', rejectListen);
       resolveListen();
     });
@@ -165,7 +165,7 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
   httpServer.on('error', (err) => log(`HTTP server error: ${err.message}`));
 
   const address = httpServer.address();
-  const port = typeof address === 'object' && address ? address.port : (options.port ?? 3001);
+  const port = typeof address === 'object' && address ? address.port : (options.port ?? 3000);
   listenPort = port;
 
   return {
@@ -208,7 +208,7 @@ function isMainModule(): boolean {
 }
 
 async function main(): Promise<void> {
-  const port = Number(process.env.PORT) || 3001;
+  const port = Number(process.env.PORT) || 3000;
   let server: RunningServer;
   try {
     server = await startServer({ port });
