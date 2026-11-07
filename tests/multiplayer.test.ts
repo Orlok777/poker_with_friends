@@ -1,198 +1,295 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ActionName, HandView, PlayerView, ServerMsg, TableState } from '../shared/types.js';
+import type { Card, ServerMsg, TableState } from '../shared/types.js';
 import { isHiddenCard } from '../shared/types.js';
+import { mulberry32 } from '../server/deck.js';
 import type { ServerOptions } from '../server/index.js';
-import type { Timing } from '../server/table.js';
-import { betOf, cards, createHarness, sleep, waitUntil, type TestClient } from './helpers.js';
+import { cards, createHarness, netOf, passive, sleep, waitUntil, type Policy, type TestClient } from './helpers.js';
 
 const h = createHarness();
-let expectedLogs = 0;
 
 afterEach(async () => {
   const logs = h.logs.splice(0);
   await h.cleanup();
   // Nothing may be logged as an error or warning during a normal test.
-  expect(logs.length).toBe(expectedLogs);
-  expectedLogs = 0;
+  expect(logs).toEqual([]);
 });
 
-/** Boots a server with a host (Alex) and a guest (Bob), both joined and ready, game not started. */
-async function twoPlayers(options: Partial<ServerOptions> = {}) {
+/** Boots a server with a host (Alex) and guests, all joined and ready, game not started. */
+async function players(names: string[], options: Partial<ServerOptions> = {}) {
   const { srv, dataDir } = await h.boot(options);
-  const alex = await h.client(srv);
-  const bob = await h.client(srv);
-  expect((await alex.join('Alex', { hostToken: srv.hostToken })).type).toBe('joined');
-  expect((await bob.join('Bob')).type).toBe('joined');
-  alex.send({ type: 'set_ready', ready: true });
-  bob.send({ type: 'set_ready', ready: true });
-  await alex.waitForState((s) => s.players.every((p) => p.ready));
-  return { srv, dataDir, alex, bob };
+  const clients: TestClient[] = [];
+  for (const [i, name] of names.entries()) {
+    const c = await h.client(srv);
+    expect((await c.join(name, i === 0 ? { hostToken: srv.hostToken } : {})).type).toBe('joined');
+    c.send({ type: 'set_ready', ready: true });
+    clients.push(c);
+  }
+  await clients[0]!.waitForState((s) => s.players.length === names.length && s.players.every((p) => p.ready));
+  return { srv, dataDir, clients };
 }
 
-const standAlways = (): ActionName => 'stand';
-
-function allMessages(...clients: TestClient[]): ServerMsg[] {
-  return clients.flatMap((c) => c.all);
+async function twoPlayers(options: Partial<ServerOptions> = {}) {
+  const { srv, dataDir, clients } = await players(['Alex', 'Bob'], options);
+  return { srv, dataDir, alex: clients[0]!, bob: clients[1]! };
 }
 
-describe('playing rounds', () => {
-  it('2 clients join, bet and play 3 rounds without errors', async () => {
-    const { alex, bob } = await twoPlayers();
-    const hitBelow17 = (p: HandView): ActionName => (p.total < 17 ? 'hit' : 'stand');
-    alex.autoPlay(10, hitBelow17);
-    bob.autoPlay(10, hitBelow17);
-    const settles = alex.collectSettles();
-    const bobSettles = bob.collectSettles();
-    alex.send({ type: 'start_game' });
+/**
+ * A heads-up deal: the player left of the button (the big blind) gets the first and third card,
+ * the button the second and fourth, then the board.
+ */
+function headsUp(bigBlind: string, button: string, board: string): Card[] {
+  const [b1, b2] = cards(bigBlind);
+  const [d1, d2] = cards(button);
+  return [b1!, d1!, b2!, d2!, ...cards(board)];
+}
 
-    await waitUntil(() => settles.has(3) && bobSettles.has(3), 8000, 'round 3');
-    expect(alex.errors).toEqual([]);
-    expect(bob.errors).toEqual([]);
+/** The client sitting in a seat. */
+function inSeat(clients: TestClient[], s: TableState, seat: number | null): TestClient {
+  const id = seat === null ? null : s.seats[seat];
+  const c = clients.find((x) => x.id === id);
+  if (!c) throw new Error(`Nobody in seat ${seat}`);
+  return c;
+}
 
-    // Chips follow the round results exactly.
-    for (const [c, seen] of [[alex, settles], [bob, bobSettles]] as const) {
-      let chips = 1000;
-      const roundResults = c.all.filter((m): m is Extract<ServerMsg, { type: 'round_result' }> => m.type === 'round_result');
-      expect(roundResults.length).toBeGreaterThanOrEqual(3);
-      for (const r of roundResults.filter((x) => x.round <= 3)) {
-        const mine = r.results.find((x) => x.playerId === c.id);
-        if (mine) chips += mine.delta;
-        expect(c.me(seen.get(r.round)!).chips, `${c.me().name} after round ${r.round}`).toBe(chips);
-      }
+const allMessages = (...clients: TestClient[]): ServerMsg[] => clients.flatMap((c) => c.all);
+const json = (card: Card) => JSON.stringify({ rank: card.rank, suit: card.suit });
+const states = (c: TestClient) => c.all.filter((m): m is TableState => m.type === 'table_state');
+
+/**
+ * No state ever holds another player's hole cards before they are shown, or a board card before it is dealt.
+ * Every player is a test client, so their real cards are known from their own `you` block.
+ */
+function checkPrivacy(clients: TestClient[]): void {
+  const holes = new Map<string, Card[]>(); // "hand:playerId" -> cards
+  const boards = new Map<number, Card[]>();
+  for (const c of clients) {
+    for (const s of states(c)) {
+      if (s.you && s.you.cards.length === 2) holes.set(`${s.hand}:${c.id}`, s.you.cards);
+      if (s.board.length > (boards.get(s.hand)?.length ?? 0)) boards.set(s.hand, s.board);
     }
-  });
-
-  it('two players play 5 full rounds and the chip counts are exact after each', async () => {
-    // Deal order per round: Alex, Bob, dealer up, Alex, Bob, dealer hole, then any draws.
-    const rigged = cards(
-      [
-        '10 10 10 9 6 7D', // 1: Alex 19 beats dealer 17, Bob 16 loses
-        'A 8 6 K 7 10 9', // 2: Alex blackjack, dealer busts (Bob 15 wins)
-        '10 10 9 2 8 9 10', // 3: Alex 12 hits and busts, Bob 18 pushes dealer 18
-        '5 9 10 6 9 8 10', // 4: Alex 11 doubles to 21 and wins, Bob 18 pushes
-        '10 A A 9 K K', // 5: dealer blackjack, Alex 19 loses, Bob blackjack pushes
-      ].join(' '),
-    );
-    const { alex, bob } = await twoPlayers({ rigged });
-    alex.autoPlay(100, (p) => (p.cards.length === 2 && p.total === 11 ? 'double' : p.total <= 12 ? 'hit' : 'stand'));
-    bob.autoPlay(50, standAlways);
-    const settles = alex.collectSettles();
-    alex.send({ type: 'start_game' });
-
-    const expected: [number, number][] = [
-      [1100, 950],
-      [1250, 1000],
-      [1150, 1000],
-      [1350, 1000],
-      [1250, 1000],
-    ];
-    for (let round = 1; round <= 5; round++) {
-      await waitUntil(() => settles.has(round), 6000, `round ${round}`);
-      const s = settles.get(round)!;
-      const [a, b] = expected[round - 1]!;
-      expect(alex.me(s).chips, `Alex after round ${round}`).toBe(a);
-      expect(bob.me(s).chips, `Bob after round ${round}`).toBe(b);
-    }
-    const last = settles.get(5)!;
-    expect(alex.me(last).hands[0]!.outcome).toBe('loss');
-    expect(bob.me(last).hands[0]!.outcome).toBe('push');
-    expect(alex.errors).toEqual([]);
-    expect(bob.errors).toEqual([]);
-  });
-
-  it('hides the hole card until it is revealed and never sends the host token', async () => {
-    const rigged = cards('10 10 10 9 6 7D');
-    const { srv, alex, bob } = await twoPlayers({ rigged });
-    alex.autoPlay(100, standAlways);
-    bob.autoPlay(50, standAlways);
-    const settles = alex.collectSettles();
-    alex.send({ type: 'start_game' });
-    await waitUntil(() => settles.has(1), 6000, 'round 1');
-
-    const holeCard = { rank: '7', suit: 'D' };
-    for (const c of [alex, bob]) {
-      const states = c.all.filter((m): m is TableState => m.type === 'table_state' && m.round === 1);
-      let sawHidden = false;
-      for (const s of states) {
-        const covered = s.phase === 'dealing' || s.phase === 'player_turns';
-        if (!covered) continue;
-        const dealt = s.dealer.cards;
-        if (dealt.length > 1) {
-          expect(isHiddenCard(dealt[1]!)).toBe(true);
-          sawHidden = true;
+  }
+  expect(holes.size).toBeGreaterThan(0);
+  for (const c of clients) {
+    for (const s of states(c)) {
+      if (s.phase === 'waiting') continue;
+      const text = JSON.stringify(s);
+      for (const p of s.players) {
+        if (p.id === c.id || p.handName !== null) continue; // own cards, or shown
+        expect(p.cards.every((x) => isHiddenCard(x))).toBe(true);
+        for (const card of holes.get(`${s.hand}:${p.id}`) ?? []) {
+          expect(text.includes(json(card)), `${c.me(s).name} saw a hole card of ${p.name}`).toBe(false);
         }
-        // The hole card must not appear anywhere in the message, not only in the dealer's cards.
-        const text = JSON.stringify(s);
-        expect(text.includes(JSON.stringify(holeCard))).toBe(false);
-        expect(text.includes('"rank":"7","suit":"D"')).toBe(false);
       }
-      expect(sawHidden).toBe(true);
+      for (const card of (boards.get(s.hand) ?? []).slice(s.board.length)) {
+        expect(text.includes(json(card)), 'a board card was sent before it was dealt').toBe(false);
+      }
     }
-    // After the reveal the real card is there.
-    const revealed = settles.get(1)!;
-    expect(revealed.dealer.cards[1]).toEqual(holeCard);
+  }
+}
 
-    const everything = JSON.stringify(allMessages(alex, bob));
-    expect(everything.includes(srv.hostToken)).toBe(false);
+describe('playing hands', () => {
+  it('3 clients play 5 hands without errors, keeping hole cards and the deck private', async () => {
+    const { srv, clients } = await players(['Alex', 'Bob', 'Cy']);
+    const rng = mulberry32(5);
+    // Mostly calls and checks, with some folds and minimum raises.
+    const mixed: Policy = (l) => {
+      const r = rng();
+      if (r < 0.1 && !l.canCheck) return { action: 'fold' };
+      if (r < 0.3 && (l.canBet || l.canRaise)) return { action: l.canBet ? 'bet' : 'raise', amount: l.minTo };
+      return passive(l, null as never);
+    };
+    for (const c of clients) c.autoPlay(mixed);
+    const overs = clients[0]!.collectHandOvers();
+    clients[0]!.send({ type: 'start_game' });
+
+    await waitUntil(() => overs.has(5), 15000, 'hand 5');
+    for (const c of clients) expect(c.errors).toEqual([]);
+
+    // Chips are only moved around, never made or lost.
+    for (let hand = 1; hand <= 5; hand++) {
+      const s = overs.get(hand)!;
+      expect(s.players.reduce((sum, p) => sum + p.chips, 0), `chips after hand ${hand}`).toBe(3000);
+      expect(s.pots).toEqual([]);
+    }
+    // The button moves one seat to the left every hand, with the blinds after it.
+    const starts = new Map<number, TableState>();
+    for (const s of states(clients[0]!)) if (s.phase === 'preflop' && !starts.has(s.hand)) starts.set(s.hand, s);
+    for (let hand = 1; hand <= 5; hand++) {
+      const s = starts.get(hand)!;
+      expect(s.smallBlindSeat).toBe((s.buttonSeat! + 1) % 3);
+      expect(s.bigBlindSeat).toBe((s.buttonSeat! + 2) % 3);
+      if (hand > 1) expect(s.buttonSeat).toBe((starts.get(hand - 1)!.buttonSeat! + 1) % 3);
+    }
+
+    checkPrivacy(clients);
+    expect(JSON.stringify(allMessages(...clients)).includes(srv.hostToken)).toBe(false);
+  });
+
+  it('two players play 10 full hands with exact chips after each, and the button and blinds alternate', async () => {
+    const { alex, bob } = await twoPlayers();
+    alex.autoPlay(passive);
+    bob.autoPlay(passive);
+    const overs = alex.collectHandOvers();
+    alex.send({ type: 'start_game' });
+    await waitUntil(() => overs.has(10), 20000, 'hand 10');
+
+    const chips = new Map([[alex.id, 1000], [bob.id, 1000]]);
+    const results = alex.results();
+    let lastButton: number | null = null;
+    for (let hand = 1; hand <= 10; hand++) {
+      const r = results.find((x) => x.hand === hand)!;
+      expect(r.showdown).toBe(true); // nobody ever folds
+      expect(r.players.reduce((sum, p) => sum + p.net, 0)).toBe(0);
+      const s = overs.get(hand)!;
+      for (const c of [alex, bob]) {
+        chips.set(c.id, chips.get(c.id)! + netOf(r, c.id));
+        expect(c.me(s).chips, `${c.me(s).name} after hand ${hand}`).toBe(chips.get(c.id));
+      }
+      // Heads-up: the button posts the small blind.
+      expect(s.smallBlindSeat).toBe(s.buttonSeat);
+      expect(s.bigBlindSeat).toBe(1 - s.buttonSeat!);
+      if (lastButton !== null) expect(s.buttonSeat).toBe(1 - lastButton);
+      lastButton = s.buttonSeat;
+    }
+    expect(alex.errors).toEqual([]);
+    expect(bob.errors).toEqual([]);
+  });
+
+  it('shows the hands at showdown, names them and pays the better hand', async () => {
+    const rigged = [headsUp('AS AH', '2D 7C', '9H 9S KD 4C 3H')];
+    const { alex, bob } = await twoPlayers({ rigged });
+    alex.autoPlay(passive);
+    bob.autoPlay(passive);
+    alex.send({ type: 'start_game' });
+    const over = await alex.waitForState((s) => s.phase === 'hand_over', 6000);
+    const clients = [alex, bob];
+    const winner = inSeat(clients, over, over.bigBlindSeat);
+    const loser = inSeat(clients, over, over.buttonSeat);
+
+    const r = alex.results()[0]!;
+    expect(r.pots).toEqual([
+      {
+        amount: 20,
+        winners: [winner.id],
+        handName: 'Two pair, aces and nines',
+        cards: cards('AS AH 9H 9S KD'),
+      },
+    ]);
+    expect(netOf(r, winner.id)).toBe(10);
+    expect(netOf(r, loser.id)).toBe(-10);
+    expect(winner.me(over).chips).toBe(1010);
+    // Both hands are face up for everyone, with their names.
+    for (const c of clients) {
+      const seen = c.state!;
+      expect(winner.me(seen).cards).toEqual(cards('AS AH'));
+      expect(loser.me(seen).handName).toBe('Pair of nines');
+    }
+    const log = over.log.map((e) => e.text);
+    expect(log).toContain(`${winner.me(over).name} shows two pair, aces and nines`);
+    expect(log).toContain(`${winner.me(over).name} wins 20 with two pair, aces and nines`);
+    expect(log).toContain('Flop: 9♥ 9♠ K♦');
+    checkPrivacy(clients);
+  });
+
+  it('gives the pot at once when everyone else folds, returns the uncalled bet and keeps the cards hidden', async () => {
+    const { alex, bob } = await twoPlayers();
+    alex.send({ type: 'start_game' });
+    const s = await alex.waitForState((st) => st.turn !== null);
+    const clients = [alex, bob];
+    const button = inSeat(clients, s, s.buttonSeat); // the small blind acts first heads-up
+    const other = clients.find((c) => c !== button)!;
+    await button.waitForTurn();
+    button.send({ type: 'action', action: 'raise', amount: 100 });
+    await other.waitForTurn();
+    other.send({ type: 'action', action: 'fold' });
+    const over = await alex.waitForState((st) => st.phase === 'hand_over');
+    expect(over.result).toMatchObject({ showdown: false, pots: [{ amount: 20, winners: [button.id], handName: null, cards: [] }] });
+    expect(button.me(over).chips).toBe(1010);
+    expect(other.me(over).chips).toBe(990);
+    const log = over.log.map((e) => e.text);
+    expect(log).toContain(`90 uncalled goes back to ${button.me(over).name}`);
+    expect(log).toContain(`${button.me(over).name} wins 20`);
+    // Nobody's cards were shown.
+    expect(over.players.every((p) => p.handName === null)).toBe(true);
+    checkPrivacy(clients);
+  });
+
+  it('turns the hands face up and runs out the board when everyone is all in', async () => {
+    const rigged = [headsUp('KS KH', 'QS QH', '2C 7D 9C JD 3S')];
+    const { alex, bob } = await twoPlayers({ rigged, timing: { runoutMs: 40 } });
+    alex.autoPlay((l) => (l.canAllIn ? { action: 'all_in' } : passive(l, null as never)));
+    bob.autoPlay((l) => (l.canAllIn ? { action: 'all_in' } : passive(l, null as never)));
+    alex.send({ type: 'start_game' });
+    const over = await alex.waitForState((s) => s.phase === 'hand_over', 6000);
+    // Before the river, both hands were already face up for the other player.
+    const early = states(alex).find((s) => s.hand === 1 && s.board.length < 5 && s.players.every((p) => p.handName !== null));
+    expect(early).toBeDefined();
+    const winner = inSeat([alex, bob], over, over.bigBlindSeat);
+    expect(winner.me(over).chips).toBe(2000);
+    expect(over.players.reduce((sum, p) => sum + p.chips, 0)).toBe(2000);
   });
 });
 
 describe('host and settings', () => {
   it("shows the host's setting changes to the other player and locks them after Start", async () => {
-    const { srv, alex, bob } = await twoPlayers();
+    const { alex, bob } = await twoPlayers();
     alex.send({
       type: 'update_settings',
-      settings: { minBet: 25, decks: 2, dealerHitsSoft17: true, blackjackPayout: '6:5', doubleRule: '9-11', password: 'secret', turnSeconds: null },
+      settings: { smallBlind: 10, bigBlind: 20, maxPlayers: 9, password: 'secret', turnSeconds: null },
     });
-    const s = await bob.waitForState((st) => st.settings.minBet === 25);
-    expect(s.settings).toMatchObject({
-      decks: 2,
-      dealerHitsSoft17: true,
-      blackjackPayout: '6:5',
-      doubleRule: '9-11',
-      passwordSet: true,
-      turnSeconds: null,
-    });
+    const s = await bob.waitForState((st) => st.settings.bigBlind === 20);
+    expect(s.settings).toMatchObject({ smallBlind: 10, bigBlind: 20, maxPlayers: 9, passwordSet: true, turnSeconds: null });
     // The password itself is never sent.
     expect(JSON.stringify(allMessages(alex, bob)).includes('secret')).toBe(false);
     expect(alex.me(s).id).toBe(s.hostId);
 
-    alex.autoPlay(25, standAlways);
-    bob.autoPlay(25, standAlways);
     alex.send({ type: 'start_game' });
-    await bob.waitForState((st) => st.started);
-
-    const err = await alex.expectError({ type: 'update_settings', settings: { minBet: 50 } });
+    const started = await bob.waitForState((st) => st.started && st.phase === 'preflop');
+    expect(started.players.reduce((sum, p) => sum + p.bet, 0)).toBe(30); // blinds 10 and 20
+    const err = await alex.expectError({ type: 'update_settings', settings: { bigBlind: 50 } });
     expect(err.code).toBe('settings_locked');
-    expect(bob.state!.settings.minBet).toBe(25);
-    void srv;
+    expect(bob.state!.settings.bigBlind).toBe(20);
   });
 
   it('rejects invalid settings and settings changes from a non-host', async () => {
     const { alex, bob } = await twoPlayers();
-    expect((await bob.expectError({ type: 'update_settings', settings: { minBet: 50 } })).code).toBe('not_host');
-    expect((await alex.expectError({ type: 'update_settings', settings: { minBet: 5000 } })).code).toBe('invalid_settings');
-    expect((await alex.expectError({ type: 'update_settings', settings: { decks: 9 } })).code).toBe('invalid_settings');
-    expect((await alex.expectError({ type: 'update_settings', settings: { minBet: 'ten' as unknown as number } })).code).toBe('invalid_settings');
-    expect((await alex.expectError({ type: 'update_settings', settings: { maxPlayers: 1 } })).code).toBe('invalid_settings');
+    expect((await bob.expectError({ type: 'update_settings', settings: { bigBlind: 20 } })).code).toBe('not_host');
+    const bad: Record<string, unknown>[] = [
+      { bigBlind: 101 }, // more than a tenth of 1,000
+      { smallBlind: 20 }, // more than the big blind
+      { smallBlind: 0 },
+      { bigBlind: 'ten' },
+      { maxPlayers: 1 },
+      { maxPlayers: 10 },
+      { startingChips: 99 },
+      { turnSeconds: 5 },
+    ];
+    for (const settings of bad) {
+      expect((await alex.expectError({ type: 'update_settings', settings: settings as never })).code).toBe('invalid_settings');
+    }
     expect((await bob.expectError({ type: 'start_game' })).code).toBe('not_host');
-    expect(alex.state!.settings.minBet).toBe(10);
-    expect('maxBet' in alex.state!.settings).toBe(false);
+    expect(alex.state!.settings).toMatchObject({ smallBlind: 5, bigBlind: 10, maxPlayers: 6, startingChips: 1000 });
     expect(alex.state!.started).toBe(false);
   });
 
-  it('needs a ready player before the host can start', async () => {
+  it('needs two ready players before the host can start', async () => {
     const { srv } = await h.boot();
     const alex = await h.client(srv);
+    const bob = await h.client(srv);
     await alex.join('Alex', { hostToken: srv.hostToken });
+    await bob.join('Bob');
     expect((await alex.expectError({ type: 'start_game' })).code).toBe('cannot_start');
     alex.send({ type: 'set_ready', ready: true });
-    await alex.waitForState((s) => s.players[0]!.ready);
+    await alex.waitForState((s) => alex.me(s).ready);
+    expect((await alex.expectError({ type: 'start_game' })).code).toBe('cannot_start');
+    bob.send({ type: 'set_ready', ready: true });
+    await alex.waitForState((s) => bob.me(s).ready);
     alex.send({ type: 'start_game' });
     const s = await alex.waitForState((st) => st.started);
-    expect(s.phase).toBe('betting');
+    expect(['waiting', 'preflop']).toContain(s.phase);
+    await alex.waitForState((st) => st.phase === 'preflop');
   });
 
   it('gives host controls only to a client with the host token, and restores them when it comes back', async () => {
@@ -210,8 +307,8 @@ describe('host and settings', () => {
     const again = await h.client(srv);
     const reply = await again.join('Alex', { hostToken: srv.hostToken });
     expect((reply as { isHost: boolean }).isHost).toBe(true);
-    again.send({ type: 'update_settings', settings: { minBet: 20 } });
-    await guest.waitForState((s) => s.settings.minBet === 20);
+    again.send({ type: 'update_settings', settings: { bigBlind: 20 } });
+    await guest.waitForState((s) => s.settings.bigBlind === 20);
   });
 });
 
@@ -262,6 +359,17 @@ describe('joining and kicking', () => {
     expect((await retry.join('Someone Else')).type).toBe('joined');
   });
 
+  it('folds a kicked player in the middle of a hand', async () => {
+    const { clients } = await players(['Alex', 'Bob', 'Cy'], { timing: { turnMs: 5000 } });
+    const [alex, , cy] = clients as [TestClient, TestClient, TestClient];
+    alex.send({ type: 'start_game' });
+    await alex.waitForState((s) => s.turn !== null);
+    alex.send({ type: 'kick_player', playerId: cy.id });
+    const s = await alex.waitForState((st) => st.players.find((p) => p.id === cy.id)?.folded === true);
+    expect(s.players.find((p) => p.id === cy.id)!.lastAction).toBe('Fold');
+    expect(s.log.some((e) => e.text === 'Cy folds')).toBe(true);
+  });
+
   it('keeps the connection usable after garbage input', async () => {
     const { srv } = await h.boot();
     const c = await h.client(srv);
@@ -269,7 +377,7 @@ describe('joining and kicking', () => {
     c.sendRaw('{"no":"type"}');
     c.sendRaw('[1,2,3]');
     c.sendRaw('null');
-    c.sendRaw(JSON.stringify({ type: 'place_bet', amount: 5 })); // before joining
+    c.sendRaw(JSON.stringify({ type: 'action', action: 'fold' })); // before joining
     c.sendRaw(JSON.stringify({ type: 'join', username: 42 }));
     await waitUntil(() => c.errors.length >= 6, 3000, 'six errors');
     expect(c.errors.map((e) => e.code)).toEqual(['bad_message', 'bad_message', 'bad_message', 'bad_message', 'not_joined', 'bad_username']);
@@ -277,186 +385,155 @@ describe('joining and kicking', () => {
     expect((await c.expectError({ type: 'bogus' } as never)).code).toBe('bad_message');
   });
 
-  it('lets a watcher take a seat when one frees up', async () => {
-    const { srv } = await h.boot({ timing: { bettingMs: 250 } });
-    const alex = await h.client(srv);
-    const bob = await h.client(srv);
-    await alex.join('Alex', { hostToken: srv.hostToken });
-    alex.send({ type: 'update_settings', settings: { maxPlayers: 1 } });
-    await alex.waitForState((s) => s.settings.maxPlayers === 1);
-    const info = bob.all.find((m) => m.type === 'server_info');
-    expect(info).toMatchObject({ seatsFree: true });
-    await bob.join('Bob');
-    alex.send({ type: 'set_ready', ready: true });
+  it('lets a player who joins mid-game watch until a seat frees up, then deals them in', async () => {
+    const { srv, alex, bob } = await twoPlayers({ timing: { turnMs: 5000 } });
+    alex.send({ type: 'update_settings', settings: { maxPlayers: 2 } });
+    await alex.waitForState((s) => s.settings.maxPlayers === 2);
     alex.send({ type: 'start_game' });
-    const s = await bob.waitForState((st) => st.phase === 'betting');
-    expect(bob.me(s).seat).toBeNull();
-    expect(alex.me(s).seat).toBe(0);
-    expect((await bob.expectError({ type: 'place_bet', amount: 10 })).code).toBe('not_seated');
+    await alex.waitForState((s) => s.phase === 'preflop');
 
-    alex.send({ type: 'leave' });
-    const later = await bob.waitForState((st) => bob.me(st).seat === 0, 3000);
-    expect(later.seats).toEqual([bob.id]);
+    const cy = await h.client(srv);
+    expect(cy.all.find((m) => m.type === 'server_info')).toMatchObject({ seatsFree: false });
+    await cy.join('Cy');
+    const s = cy.state!;
+    expect(cy.me(s).seat).toBeNull();
+    expect(cy.me(s).inHand).toBe(false);
+    expect(s.you).toBeNull();
+    expect((await cy.expectError({ type: 'sit_out', sittingOut: true })).code).toBe('not_seated');
+    expect((await cy.expectError({ type: 'action', action: 'fold' })).code).toBe('not_your_turn');
+
+    bob.send({ type: 'leave' });
+    const later = await cy.waitForState((st) => cy.me(st).seat !== null, 3000);
+    expect(later.seats).toContain(cy.id);
+    alex.autoPlay(passive);
+    cy.autoPlay(passive);
+    const dealt = await cy.waitForState((st) => cy.me(st).inHand && st.you?.cards.length === 2, 4000);
+    expect(dealt.you?.cards.length).toBeGreaterThan(0);
   });
 });
 
 describe('rejected messages', () => {
-  it('rejects out-of-turn actions, out-of-phase messages and bets outside the limits without changing anything', async () => {
-    const rigged = cards('10 10 10 9 6 7');
-    const { alex, bob } = await twoPlayers({ rigged, timing: { turnMs: 5000, bettingMs: 5000 } });
+  it('rejects out-of-turn actions, illegal amounts and out-of-phase messages without changing anything', async () => {
+    const { alex, bob } = await twoPlayers({ timing: { turnMs: 5000 } });
+    expect((await bob.expectError({ type: 'action', action: 'check' })).code).toBe('wrong_phase');
     alex.send({ type: 'start_game' });
-    await bob.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
+    const s = await alex.waitForState((st) => st.turn !== null);
+    const clients = [alex, bob];
+    const first = inSeat(clients, s, s.buttonSeat); // heads-up the button acts first preflop
+    const second = clients.find((c) => c !== first)!;
+    await first.waitForTurn();
 
-    // Betting phase
-    expect((await bob.expectError({ type: 'action', action: 'hit' })).code).toBe('wrong_phase');
-    expect((await bob.expectError({ type: 'place_bet', amount: 5 })).code).toBe('bet_invalid');
-    expect((await bob.expectError({ type: 'place_bet', amount: 1001 })).code).toBe('insufficient_chips');
-    expect((await bob.expectError({ type: 'place_bet', amount: 1_000_000 })).code).toBe('insufficient_chips');
-    expect((await bob.expectError({ type: 'place_bet', amount: 12.5 })).code).toBe('bet_invalid');
-    expect((await bob.expectError({ type: 'place_bet', amount: '50' as unknown as number })).code).toBe('bet_invalid');
-    expect((await bob.expectError({ type: 'place_bet', amount: -50 })).code).toBe('bet_invalid');
-    expect(bob.me().chips).toBe(1000);
-    expect(betOf(bob.me())).toBe(0);
+    const snapshot = () => JSON.stringify(first.state!.players.map((p) => [p.id, p.chips, p.bet, p.folded]));
+    const before = snapshot();
+    expect((await second.expectError({ type: 'action', action: 'call' })).code).toBe('not_your_turn');
+    expect((await second.expectError({ type: 'action', action: 'raise', amount: 40 })).code).toBe('not_your_turn');
+    expect((await first.expectError({ type: 'action', action: 'fly' as never })).code).toBe('bad_message');
+    expect((await first.expectError({ type: 'action', action: 'check' })).code).toBe('action_not_allowed');
+    expect((await first.expectError({ type: 'action', action: 'bet', amount: 20 })).code).toBe('action_not_allowed');
+    expect((await first.expectError({ type: 'action', action: 'raise', amount: 19 })).code).toBe('bad_amount');
+    expect((await first.expectError({ type: 'action', action: 'raise', amount: 1001 })).code).toBe('bad_amount');
+    expect((await first.expectError({ type: 'action', action: 'raise', amount: 25.5 })).code).toBe('bad_amount');
+    expect((await first.expectError({ type: 'action', action: 'raise', amount: '50' as never })).code).toBe('bad_amount');
+    expect((await first.expectError({ type: 'action', action: 'raise', amount: -50 })).code).toBe('bad_amount');
+    expect((await first.expectError({ type: 'action', action: 'raise' })).code).toBe('bad_amount');
+    expect((await first.expectError({ type: 'reset_chips' })).code).toBe('cannot_reset');
+    expect((await first.expectError({ type: 'pay_back' })).code).toBe('cannot_pay_back');
+    expect((await first.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
+    expect((await bob.expectError({ type: 'update_settings', settings: { bigBlind: 20 } })).code).toBe('not_host');
+    expect((await alex.expectError({ type: 'update_settings', settings: { bigBlind: 20 } })).code).toBe('settings_locked');
+    expect((await second.expectError({ type: 'set_ready', ready: true })).code).toBe('wrong_phase');
+    expect(snapshot()).toBe(before);
+    expect(first.state!.turn).toBe(first.id);
 
-    alex.send({ type: 'place_bet', amount: 100 });
-    await alex.waitForState((s) => betOf(alex.me(s)) === 100);
-    expect((await alex.expectError({ type: 'place_bet', amount: 100 })).code).toBe('already_bet');
-    expect(alex.me().chips).toBe(900);
-    expect((await bob.expectError({ type: 'set_ready', ready: true })).code).toBe('wrong_phase');
+    // The legal range is offered to the player whose turn it is, and only to them.
+    expect(first.state!.you!.legal).toMatchObject({ canCheck: false, callAmount: 5, canRaise: true, minTo: 20, maxTo: 1000, allInTo: 1000 });
+    expect(second.state!.you!.legal).toBeNull();
 
-    bob.send({ type: 'place_bet', amount: 50 });
-    const turn = await alex.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
-
-    // Player turns: Bob acts out of turn.
-    const before = JSON.stringify(turn.players.map((p) => [p.id, p.hands, p.chips]));
-    expect((await bob.expectError({ type: 'action', action: 'hit' })).code).toBe('not_your_turn');
-    expect((await bob.expectError({ type: 'action', action: 'stand' })).code).toBe('not_your_turn');
-    expect((await alex.expectError({ type: 'action', action: 'fly' as never })).code).toBe('bad_message');
-    expect((await alex.expectError({ type: 'place_bet', amount: 10 })).code).toBe('wrong_phase');
-    expect((await alex.expectError({ type: 'reset_chips' })).code).toBe('cannot_reset');
-    expect((await bob.expectError({ type: 'update_settings', settings: { minBet: 1 } })).code).toBe('not_host');
-    const after = JSON.stringify(bob.state!.players.map((p) => [p.id, p.hands, p.chips]));
-    expect(after).toBe(before);
-    expect(bob.state!.turn).toBe(alex.id);
-
-    // Doubling is only valid when the rules allow it: Alex has 19, which is allowed under "any two cards".
-    alex.send({ type: 'action', action: 'stand' });
-    await bob.waitForState((s) => s.turn === bob.id);
-    bob.send({ type: 'action', action: 'stand' });
-    await bob.waitForState((s) => s.phase === 'settle');
-  });
-
-  it('rejects doubling when the rule is off or the chips are short', async () => {
-    const rigged = cards('5 6 10 6 5 7'); // Alex 11 (6+5), dealer 17
-    const { srv } = await h.boot({ rigged });
-    const alex = await h.client(srv);
-    await alex.join('Alex', { hostToken: srv.hostToken });
-    alex.send({ type: 'update_settings', settings: { doubleRule: 'off', startingChips: 100 } });
-    await alex.waitForState((s) => s.settings.doubleRule === 'off');
-    alex.send({ type: 'reset_chips' });
-    await alex.waitForState((s) => alex.me(s).chips === 100);
-    alex.send({ type: 'set_ready', ready: true });
-    alex.send({ type: 'start_game' });
-    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-    alex.send({ type: 'place_bet', amount: 100 });
-    await alex.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
-    expect(alex.me().hands[0]!.canDouble).toBe(false);
-    expect((await alex.expectError({ type: 'action', action: 'double' })).code).toBe('action_not_allowed');
-    alex.send({ type: 'action', action: 'stand' });
-    await alex.waitForState((s) => s.phase === 'settle');
+    first.send({ type: 'action', action: 'raise', amount: 20 });
+    await second.waitForTurn();
+    second.send({ type: 'action', action: 'fold' });
+    await alex.waitForState((st) => st.phase === 'hand_over');
+    expect((await first.expectError({ type: 'action', action: 'check' })).code).toBe('wrong_phase');
   });
 });
 
 describe('timers and disconnects', () => {
-  it('stands an idle player when the turn timer runs out, and sits out a player who does not bet', async () => {
-    const rigged = cards('10 10 10 9 6 7');
-    const { alex, bob } = await twoPlayers({ rigged, timing: { bettingMs: 300, turnMs: 250 } });
+  it('checks or folds a player when the turn timer runs out', async () => {
+    const { alex, bob } = await twoPlayers({ timing: { turnMs: 200 } });
     alex.send({ type: 'start_game' });
-    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-    alex.send({ type: 'place_bet', amount: 100 }); // Bob never bets
-
-    const dealt = await alex.waitForState((s) => s.phase === 'player_turns');
-    expect(betOf(bob.me(dealt))).toBe(0);
-    expect(bob.me(dealt).hands).toEqual([]); // no bet, no hand
-    expect(bob.me(dealt).chips).toBe(1000);
-    expect(dealt.turn).toBe(alex.id);
-
-    // Alex does nothing, so the timer stands for him.
-    const settled = await alex.waitForState((s) => s.phase === 'settle', 4000);
-    expect(alex.me(settled).hands[0]!.status).toBe('stood');
-    expect(settled.log.some((l) => l.text.includes('Alex ran out of time'))).toBe(true);
-    expect(alex.me(settled).chips).toBe(1100); // 19 against 17
-    expect(bob.me(settled).chips).toBe(1000);
+    const s = await alex.waitForState((st) => st.turn !== null);
+    const clients = [alex, bob];
+    const button = inSeat(clients, s, s.buttonSeat);
+    const bb = clients.find((c) => c !== button)!;
+    await button.waitForTurn();
+    button.send({ type: 'action', action: 'call' });
+    // The big blind does nothing: it can check, so the timer checks for it.
+    await alex.waitForState((st) => st.log.some((e) => e.text === `${bb.me(st).name} ran out of time and checks`), 3000);
+    // On the flop the big blind acts first; with nobody acting the hand checks down to a showdown.
+    await alex.waitForState((st) => st.phase === 'hand_over' && st.hand === 1, 5000);
+    // Next hand: the new button faces the big blind, so the timer folds.
+    await alex.waitForState((st) => st.log.some((e) => / ran out of time and folds$/.test(e.text)), 3000);
+    expect(alex.errors).toEqual([]);
   });
 
   it("does not freeze the table when a player's tab closes during their turn", async () => {
-    const rigged = cards('10 10 10 9 6 7');
-    const { alex, bob } = await twoPlayers({ rigged, timing: { turnMs: 250, holdMs: 3000 } });
-    bob.autoPlay(50, standAlways);
+    const { alex, bob } = await twoPlayers({ timing: { turnMs: 250, holdMs: 3000 } });
     alex.send({ type: 'start_game' });
-    alex.autoPlay(100, () => 'stand');
-    // Alex bets, but closes the tab as soon as it is Alex's turn.
-    let closed = false;
-    alex.onState((s) => {
-      if (!closed && s.phase === 'player_turns' && s.turn === alex.id) {
-        closed = true;
-        alex.close();
-      }
-    });
-    const settled = await bob.waitForState((s) => s.phase === 'settle', 5000);
-    expect(closed).toBe(true);
-    expect(settled.players.find((p) => p.name === 'Alex')!.hands[0]!.status).toBe('stood');
-    // The seat is held, not given away.
-    expect(settled.players.find((p) => p.name === 'Alex')!.seat).toBe(0);
+    const s = await alex.waitForState((st) => st.turn !== null);
+    const clients = [alex, bob];
+    const button = inSeat(clients, s, s.buttonSeat);
+    const other = clients.find((c) => c !== button)!;
+    await button.waitForTurn();
+    button.close();
+    const over = await other.waitForState((st) => st.phase === 'hand_over', 3000);
+    expect(over.log.some((e) => e.text === `${button.me(over).name} is away and folds`)).toBe(true);
+    // The seat is held, but an absent player is not dealt into the next hand.
+    expect(button.me(over).seat).not.toBeNull();
+    const waiting = await other.waitForState((st) => st.phase === 'waiting', 3000);
+    expect(waiting.log.some((e) => e.text === 'Waiting for players')).toBe(true);
   });
 
   it('does not freeze either when the turn timer is off', async () => {
-    const rigged = cards('10 10 10 9 6 7');
-    const { alex, bob } = await twoPlayers({ rigged, timing: { holdMs: 250 } });
+    const { alex, bob } = await twoPlayers({ timing: { holdMs: 250 } });
     alex.send({ type: 'update_settings', settings: { turnSeconds: null } });
     await bob.waitForState((s) => s.settings.turnSeconds === null);
-    bob.autoPlay(50, standAlways);
     alex.send({ type: 'start_game' });
-    let closed = false;
-    alex.autoPlay(100, standAlways);
-    alex.onState((s) => {
-      if (!closed && s.phase === 'player_turns' && s.turn === alex.id) {
-        closed = true;
-        alex.close();
-      }
-    });
-    const settled = await bob.waitForState((s) => s.phase === 'settle', 5000);
-    expect(settled.players.find((p) => p.name === 'Alex')!.hands[0]!.status).toBe('stood');
+    const s = await alex.waitForState((st) => st.turn !== null);
+    expect(s.deadline).toBeNull();
+    const clients = [alex, bob];
+    const button = inSeat(clients, s, s.buttonSeat);
+    const other = clients.find((c) => c !== button)!;
+    await button.waitForTurn();
+    button.close();
+    await other.waitForState((st) => st.phase === 'hand_over', 3000);
   });
 
-  it('returns a refreshed player to the same seat mid-round', async () => {
-    const rigged = cards('10 10 10 9 6 7');
-    const { srv, alex, bob } = await twoPlayers({ rigged, timing: { turnMs: 6000, bettingMs: 6000, holdMs: 3000 } });
+  it('returns a refreshed player to the same seat with the same cards mid-hand', async () => {
+    const { srv, alex, bob } = await twoPlayers({ timing: { turnMs: 6000, holdMs: 3000 } });
     alex.send({ type: 'start_game' });
-    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-    alex.send({ type: 'place_bet', amount: 100 });
-    bob.send({ type: 'place_bet', amount: 50 });
-    const mid = await bob.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
-    const before = bob.me(mid);
-    const token = bob.token;
-    const id = bob.id;
+    const s = await alex.waitForState((st) => st.turn !== null);
+    const before = bob.state!;
+    const seat = bob.me(before).seat;
+    const holeCards = before.you!.cards;
+    expect(holeCards).toHaveLength(2);
+    const { token, id } = bob;
 
     bob.close(); // the page is refreshed
-    await alex.waitForState((s) => s.players.find((p) => p.id === id)?.connected === false);
+    await alex.waitForState((st) => st.players.find((p) => p.id === id)?.connected === false);
     const fresh = await h.client(srv);
     const reply = await fresh.join('Bob', { reconnectToken: token });
     expect(reply).toMatchObject({ type: 'joined', playerId: id });
-    const after = await fresh.waitForState((s) => s.players.find((p) => p.id === id)?.connected === true);
-    const bobAfter = after.players.find((p) => p.id === id)!;
-    expect(bobAfter.seat).toBe(before.seat);
-    expect(bobAfter.hands[0]!.cards).toEqual(before.hands[0]!.cards);
-    expect(betOf(bobAfter)).toBe(50);
+    const after = await fresh.waitForState((st) => st.players.find((p) => p.id === id)?.connected === true);
+    expect(fresh.me(after).seat).toBe(seat);
+    expect(fresh.me(after).inHand).toBe(true);
+    expect(after.you!.cards).toEqual(holeCards);
+    expect(after.hand).toBe(s.hand);
 
-    // The refreshed client can carry on: Alex stands, then Bob stands.
-    alex.send({ type: 'action', action: 'stand' });
-    await fresh.waitForState((s) => s.turn === id);
-    fresh.send({ type: 'action', action: 'stand' });
-    await fresh.waitForState((s) => s.phase === 'settle');
+    // The refreshed client can carry on playing.
+    alex.autoPlay(passive);
+    fresh.autoPlay(passive);
+    await fresh.waitForState((st) => st.phase === 'hand_over', 5000);
+    expect(fresh.errors).toEqual([]);
   });
 
   it('frees the seat after the hold, and a later rejoin keeps the saved chips', async () => {
@@ -469,20 +546,73 @@ describe('timers and disconnects', () => {
   });
 });
 
+describe('sitting out and leaving', () => {
+  it('does not deal in or charge blinds to a player who sits out, until they come back', async () => {
+    const { clients } = await players(['Alex', 'Bob', 'Cy']);
+    const [alex, bob, cy] = clients as [TestClient, TestClient, TestClient];
+    for (const c of clients) c.autoPlay(passive);
+    const overs = alex.collectHandOvers();
+    alex.send({ type: 'start_game' });
+    await alex.waitForState((s) => s.phase === 'preflop');
+    cy.send({ type: 'sit_out', sittingOut: true });
+    await cy.waitForState((s) => cy.me(s).sittingOut);
+    await waitUntil(() => overs.has(4), 10000, 'hand 4');
+
+    const chipsAfterOne = cy.me(overs.get(1)!).chips;
+    for (const hand of [2, 3, 4]) {
+      const s = overs.get(hand)!;
+      const me = cy.me(s);
+      expect(me.inHand).toBe(false);
+      expect(me.chips).toBe(chipsAfterOne);
+      expect([s.smallBlindSeat, s.bigBlindSeat]).not.toContain(me.seat);
+      expect(s.players.filter((p) => p.inHand).map((p) => p.id).sort()).toEqual([alex.id, bob.id].sort());
+    }
+    // A sitting-out player can reset chips during a hand, since they are not in it.
+    await alex.waitForState((s) => s.phase === 'preflop' && s.hand >= 5);
+    cy.send({ type: 'reset_chips' });
+    await cy.waitForState((s) => cy.me(s).chips === 1000);
+
+    cy.send({ type: 'sit_out', sittingOut: false });
+    const back = await cy.waitForState((s) => cy.me(s).inHand && s.you?.cards.length === 2, 6000);
+    expect(back.you!.cards.length).toBeGreaterThan(0);
+    expect(cy.errors).toEqual([]);
+  });
+
+  it('folds a player who leaves during a hand at once, keeping their chips in the pot', async () => {
+    const { clients } = await players(['Alex', 'Bob', 'Cy'], { timing: { turnMs: 5000 } });
+    const [alex] = clients as [TestClient];
+    alex.send({ type: 'start_game' });
+    const s = await alex.waitForState((st) => st.turn !== null);
+    // The big blind leaves while someone else is to act.
+    const bb = inSeat(clients, s, s.bigBlindSeat);
+    const name = bb.me(s).name;
+    bb.send({ type: 'leave' });
+    const after = await alex.waitForState((st) => st.players.find((p) => p.name === name)?.folded === true);
+    expect(after.players.find((p) => p.name === name)!.bet).toBe(10); // the blind stays in
+    expect(after.turn).toBe(s.turn);
+    for (const c of clients) if (c !== bb) c.autoPlay(passive);
+    const over = await alex.waitForState((st) => st.phase === 'hand_over', 5000);
+    expect(over.result!.pots.reduce((sum, p) => sum + p.amount, 0)).toBeGreaterThanOrEqual(30);
+    // Gone once the hand is over.
+    await alex.waitForState((st) => !st.players.some((p) => p.name === name), 3000);
+  });
+});
+
 describe('chips and usernames', () => {
   it('keeps chips across a server restart, gives a new username the starting chips, and resets chips', async () => {
-    const rigged = cards('10 10 9 7'); // single player: 19 against 17
-    const first = await h.boot({ rigged });
-    const alex = await h.client(first.srv);
-    await alex.join('Alex', { hostToken: first.srv.hostToken });
-    alex.send({ type: 'set_ready', ready: true });
-    alex.send({ type: 'start_game' });
-    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-    alex.send({ type: 'place_bet', amount: 100 });
-    alex.autoPlay(100, standAlways);
-    const won = await alex.waitForState((s) => s.phase === 'settle');
-    expect(alex.me(won).chips).toBe(1100);
-    expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))).toEqual({ Alex: { chips: 1100, earnings: 100 } });
+    const rigged = [headsUp('AS AH', '2D 7C', '9H 9S KD 4C 3H')];
+    const first = await twoPlayers({ rigged });
+    first.alex.autoPlay(passive);
+    first.bob.autoPlay(passive);
+    first.alex.send({ type: 'start_game' });
+    const over = await first.alex.waitForState((s) => s.phase === 'hand_over', 5000);
+    const winner = inSeat([first.alex, first.bob], over, over.bigBlindSeat);
+    const winnerName = winner.me(over).name;
+    const loserName = winnerName === 'Alex' ? 'Bob' : 'Alex';
+    expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))).toEqual({
+      [winnerName]: { chips: 1010, earnings: 10 },
+      [loserName]: { chips: 990, earnings: -10 },
+    });
     expect(existsSync(join(first.dataDir, 'players.json.tmp'))).toBe(false);
 
     // Restart the server on the same folder, with different starting chips.
@@ -494,9 +624,10 @@ describe('chips and usernames', () => {
     await host.waitForState((s) => s.settings.startingChips === 5000);
 
     const back = await h.client(second.srv);
-    await back.join('ALEX'); // same name, other case
-    expect(back.me().name).toBe('Alex');
-    expect(back.me().chips).toBe(1100);
+    await back.join(winnerName.toUpperCase()); // same name, other case
+    expect(back.me().name).toBe(winnerName);
+    expect(back.me().chips).toBe(1010);
+    expect(back.me().earnings).toBe(10);
 
     const newcomer = await h.client(second.srv);
     await newcomer.join('Newbie');
@@ -505,341 +636,73 @@ describe('chips and usernames', () => {
     // Reset chips works in the waiting room and is saved.
     back.send({ type: 'reset_chips' });
     await back.waitForState((s) => back.me(s).chips === 5000);
-    expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8')).Alex).toBe(5000);
-  });
-
-  it('resets chips in the betting phase only before the player has bet', async () => {
-    const { alex, bob } = await twoPlayers({ timing: { bettingMs: 3000 } });
-    alex.send({ type: 'start_game' });
-    await bob.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-    bob.send({ type: 'reset_chips' });
-    await sleep(50);
-    expect(bob.errors).toEqual([]);
-    bob.send({ type: 'place_bet', amount: 100 });
-    await bob.waitForState((s) => betOf(bob.me(s)) === 100);
-    expect((await bob.expectError({ type: 'reset_chips' })).code).toBe('cannot_reset');
-    expect(bob.me().chips).toBe(900);
+    expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))[winnerName]).toBe(5000);
   });
 });
 
-describe('bet limits', () => {
-  it('accepts any bet from the minimum up to the whole stack, with no maximum', async () => {
-    const rigged = cards('10 10 10 9 6 7');
-    const { alex, bob } = await twoPlayers({ rigged, timing: { bettingMs: 5000, turnMs: 5000 } });
-    alex.send({ type: 'start_game' });
-    await bob.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-    expect((await bob.expectError({ type: 'place_bet', amount: 9 })).code).toBe('bet_invalid');
-    alex.send({ type: 'place_bet', amount: 750 }); // above the old 500 cap
-    await alex.waitForState((s) => betOf(alex.me(s)) === 750);
-    expect(alex.me().chips).toBe(250);
-    bob.send({ type: 'place_bet', amount: 10 }); // the minimum itself
-    await bob.waitForState((s) => betOf(bob.me(s)) === 10);
-    expect(bob.me().chips).toBe(990);
-  });
-});
-
-describe('all in', () => {
-  it('flags a bet of the whole stack, logs it, and does not flag a smaller bet', async () => {
-    const rigged = cards('10 10 10 9 6 7');
-    const { alex, bob } = await twoPlayers({ rigged, timing: { bettingMs: 5000, turnMs: 5000 } });
-    alex.send({ type: 'start_game' });
-    await bob.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-    alex.send({ type: 'place_bet', amount: 1000 }); // the whole stack
-    bob.send({ type: 'place_bet', amount: 999 });
-    const st = await alex.waitForState((s) => betOf(alex.me(s)) === 1000 && betOf(bob.me(s)) === 999);
-    expect(alex.me(st).hands[0]!.allIn).toBe(true);
-    expect(alex.me(st).chips).toBe(0);
-    expect(bob.me(st).hands[0]!.allIn).toBe(false);
-    expect(st.log.some((e) => e.text === 'Alex goes all in (1,000)')).toBe(true);
-    expect(st.log.some((e) => e.text === 'Bob bets 999')).toBe(true);
-  });
-
-  it('refuses a bet above the stack, and a bet below the minimum', async () => {
-    const { alex, bob } = await twoPlayers({ timing: { bettingMs: 5000 } });
-    alex.send({ type: 'update_settings', settings: { minBet: 100 } });
-    await alex.waitForState((s) => s.settings.minBet === 100);
-    alex.send({ type: 'start_game' });
-    await bob.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-    expect((await bob.expectError({ type: 'place_bet', amount: 1001 })).code).toBe('insufficient_chips');
-    expect((await bob.expectError({ type: 'place_bet', amount: 99 })).code).toBe('bet_invalid');
-    expect(bob.me().chips).toBe(1000);
-  });
-});
-
-// ------------------------------------------------------------------- split
-
-/**
- * One player (Alex, the host) with 1000 chips who bets 100 and gets to act.
- * Deal order is: Alex, dealer up, Alex, dealer hole, then draws in the order they are used.
- */
-async function soloTurn(
-  riggedText: string,
-  settings: Partial<TableState['settings']> = {},
-  opts: { bet?: number; timing?: Partial<Timing> } = {},
-) {
-  const { srv } = await h.boot({ rigged: cards(riggedText), timing: opts.timing });
-  const alex = await h.client(srv);
-  await alex.join('Alex', { hostToken: srv.hostToken });
-  if (Object.keys(settings).length > 0) {
-    alex.send({ type: 'update_settings', settings });
-    await alex.waitForState((s) =>
-      Object.entries(settings).every(([k, v]) => (s.settings as unknown as Record<string, unknown>)[k] === v),
-    );
-    // Changed starting chips only apply to a fresh balance, so reset to pick them up.
-    alex.send({ type: 'reset_chips' });
-    await alex.waitForState((s) => alex.me(s).chips === s.settings.startingChips);
-  }
-  alex.send({ type: 'set_ready', ready: true });
-  alex.send({ type: 'start_game' });
-  await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-  alex.send({ type: 'place_bet', amount: opts.bet ?? 100 });
-  await alex.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
-  return alex;
-}
-
-describe('split', () => {
-  it('splits a pair into two hands, plays the left hand first and settles each hand separately', async () => {
-    // Alex 8 8, dealer 10 7 (17). Split: left 8+3, right 8+7. Left doubles with a 10, right stands on 15.
-    const alex = await soloTurn('8 10 8 7 3 7 10');
-    expect(alex.me().canSplit).toBe(true);
-
-    alex.send({ type: 'action', action: 'split' });
-    const split = await alex.waitForState((s) => alex.me(s).hands.length === 2);
-    const me = alex.me(split);
-    expect(me.chips).toBe(800); // second bet of 100 taken
-    expect(me.hands.map((x) => x.cards.map((c) => c.rank))).toEqual([['8', '3'], ['8', '7']]);
-    expect(me.hands.map((x) => x.bet)).toEqual([100, 100]);
-    expect(me.activeHand).toBe(0);
-    expect(me.canSplit).toBe(false); // no re-splitting
-    expect(me.hands[0]!.canDouble).toBe(true); // 11, double after split
-    expect(me.hands[1]!.canDouble).toBe(false); // not the hand being played
-    expect(split.turn).toBe(alex.id);
-
-    alex.send({ type: 'action', action: 'double' });
-    const second = await alex.waitForState((s) => alex.me(s).activeHand === 1);
-    expect(alex.me(second).hands[0]).toMatchObject({ bet: 200, doubled: true, status: 'stood', total: 21 });
-    expect(alex.me(second).chips).toBe(700);
-
-    alex.send({ type: 'action', action: 'stand' });
-    const settled = await alex.waitForState((s) => s.phase === 'settle');
-    const [left, right] = alex.me(settled).hands;
-    expect(left).toMatchObject({ outcome: 'win', delta: 200 }); // 21 beats 17, doubled bet
-    expect(right).toMatchObject({ outcome: 'loss', delta: -100 }); // 15 loses to 17
-    expect(alex.me(settled).chips).toBe(1100); // 1000 + 200 - 100
-
-    const result = alex.all.find((m) => m.type === 'round_result');
-    expect(result && result.type === 'round_result' ? result.results.map((r) => [r.hand, r.outcome, r.delta]) : []).toEqual([
-      [0, 'win', 200],
-      [1, 'loss', -100],
-    ]);
-  });
-
-  it('pays a 21 on a split hand 1:1, not as a blackjack (K and 10 count as a pair)', async () => {
-    // Alex K 10, dealer 9 8 (17). Split: left K+A = 21, right 10+9 = 19.
-    const alex = await soloTurn('K 9 10 8 A 9');
-    expect(alex.me().canSplit).toBe(true);
-    alex.send({ type: 'action', action: 'split' });
-    // The 21 stands by itself, so the right hand is up next.
-    const split = await alex.waitForState((s) => alex.me(s).hands.length === 2 && alex.me(s).activeHand === 1);
-    expect(alex.me(split).hands[0]).toMatchObject({ status: 'stood', total: 21 });
-
-    alex.send({ type: 'action', action: 'stand' });
-    const settled = await alex.waitForState((s) => s.phase === 'settle');
-    const [left, right] = alex.me(settled).hands;
-    expect(left).toMatchObject({ outcome: 'win', delta: 100 }); // not 150
-    expect(right).toMatchObject({ outcome: 'win', delta: 100 });
-    expect(alex.me(settled).chips).toBe(1200);
-  });
-
-  it('gives split aces one card each and stands them automatically', async () => {
-    // Alex A A, dealer 9 8 (17). Split: left A+10 = 21, right A+5 = 16.
-    const alex = await soloTurn('A 9 A 8 10 5');
-    alex.send({ type: 'action', action: 'split' });
-    const settled = await alex.waitForState((s) => s.phase === 'settle');
-    const me = alex.me(settled);
-    expect(me.hands.map((x) => x.cards.length)).toEqual([2, 2]);
-    expect(me.hands.every((x) => x.status === 'stood')).toBe(true);
-    expect(me.hands[0]).toMatchObject({ outcome: 'win', delta: 100 }); // 21 pays 1:1
-    expect(me.hands[1]).toMatchObject({ outcome: 'loss', delta: -100 });
-    expect(me.chips).toBe(1000);
-    // Neither ace ever got a turn: no state has two hands while it is still the player's turn.
-    const gaveTurn = alex.all.some(
-      (m) => m.type === 'table_state' && m.phase === 'player_turns' && m.players.some((p) => p.hands.length === 2),
-    );
-    expect(gaveTurn).toBe(false);
-  });
-
-  it('does not re-split split aces that draw another ace', async () => {
-    const alex = await soloTurn('A 9 A 8 A 5');
-    alex.send({ type: 'action', action: 'split' });
-    const settled = await alex.waitForState((s) => s.phase === 'settle');
-    expect(alex.me(settled).hands.map((x) => x.total)).toEqual([12, 16]);
-    expect(alex.me(settled).hands.every((x) => x.status === 'stood')).toBe(true);
-  });
-
-  it('refuses a split of different values', async () => {
-    const alex = await soloTurn('10 9 5 8');
-    expect(alex.me().canSplit).toBe(false);
-    expect((await alex.expectError({ type: 'action', action: 'split' })).code).toBe('action_not_allowed');
-    expect(alex.me().hands).toHaveLength(1);
-    expect(alex.me().chips).toBe(900);
-  });
-
-  it('refuses a split when the setting is off', async () => {
-    const alex = await soloTurn('8 10 8 7', { splitAllowed: false });
-    expect(alex.me().canSplit).toBe(false);
-    expect((await alex.expectError({ type: 'action', action: 'split' })).code).toBe('action_not_allowed');
-  });
-
-  it('refuses a split without chips for the second bet', async () => {
-    const alex = await soloTurn('8 10 8 7', { startingChips: 100 }, { bet: 100 });
-    expect(alex.me().chips).toBe(0);
-    expect(alex.me().canSplit).toBe(false);
-    expect((await alex.expectError({ type: 'action', action: 'split' })).code).toBe('action_not_allowed');
-  });
-
-  it('refuses a split after a hit', async () => {
-    const alex = await soloTurn('2 10 2 7 2');
-    alex.send({ type: 'action', action: 'hit' });
-    await alex.waitForState((s) => alex.me(s).hands[0]!.cards.length === 3);
-    expect(alex.me().canSplit).toBe(false);
-    expect((await alex.expectError({ type: 'action', action: 'split' })).code).toBe('action_not_allowed');
-  });
-
-  it('refuses a second split even when both new hands are pairs', async () => {
-    const alex = await soloTurn('8 10 8 7 8 8');
-    alex.send({ type: 'action', action: 'split' });
-    await alex.waitForState((s) => alex.me(s).hands.length === 2);
-    expect(alex.me().hands.map((x) => x.cards.map((c) => c.rank))).toEqual([['8', '8'], ['8', '8']]);
-    expect(alex.me().canSplit).toBe(false);
-    expect((await alex.expectError({ type: 'action', action: 'split' })).code).toBe('action_not_allowed');
-    expect(alex.me().hands).toHaveLength(2);
-    expect(alex.me().chips).toBe(800);
-  });
-
-  it('rejects a split out of turn and in the wrong phase', async () => {
-    const rigged = cards('8 8 10 8 8 7');
-    const { alex, bob } = await twoPlayers({ rigged, timing: { bettingMs: 5000, turnMs: 5000 } });
-    alex.send({ type: 'start_game' });
-    await bob.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-    expect((await alex.expectError({ type: 'action', action: 'split' })).code).toBe('wrong_phase');
-    alex.send({ type: 'place_bet', amount: 100 });
-    bob.send({ type: 'place_bet', amount: 100 });
-    await bob.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
-    expect((await bob.expectError({ type: 'action', action: 'split' })).code).toBe('not_your_turn');
-    expect(bob.me().canSplit).toBe(false); // only on that player's own turn
-    expect(bob.me().chips).toBe(900);
-  });
-
-  it('follows the 9-11 double-down setting for each hand after a split', async () => {
-    // Left 8+3 = 11 (can double), right 8+7 = 15 (cannot).
-    const alex = await soloTurn('8 10 8 7 3 7', { doubleRule: '9-11' });
-    alex.send({ type: 'action', action: 'split' });
-    await alex.waitForState((s) => alex.me(s).hands.length === 2);
-    expect(alex.me().hands[0]!.canDouble).toBe(true);
-    alex.send({ type: 'action', action: 'stand' });
-    await alex.waitForState((s) => alex.me(s).activeHand === 1);
-    expect(alex.me().hands[1]!.canDouble).toBe(false);
-    expect((await alex.expectError({ type: 'action', action: 'double' })).code).toBe('action_not_allowed');
-  });
-
-  it('does not allow a double after split when doubling is off', async () => {
-    const alex = await soloTurn('8 10 8 7 3 7', { doubleRule: 'off' });
-    alex.send({ type: 'action', action: 'split' });
-    await alex.waitForState((s) => alex.me(s).hands.length === 2);
-    expect(alex.me().hands[0]!.canDouble).toBe(false);
-    expect((await alex.expectError({ type: 'action', action: 'double' })).code).toBe('action_not_allowed');
-  });
-
-  it('restarts the turn timer for each hand', async () => {
-    const alex = await soloTurn('8 10 8 7 3 7', {}, { timing: { turnMs: 5000, bettingMs: 5000 } });
-    alex.send({ type: 'action', action: 'split' });
-    const first = await alex.waitForState((s) => alex.me(s).hands.length === 2);
-    await sleep(60);
-    alex.send({ type: 'action', action: 'stand' });
-    const second = await alex.waitForState((s) => alex.me(s).activeHand === 1);
-    expect(second.deadline!).toBeGreaterThan(first.deadline! + 30);
-  });
-
-  it('stands both hands of an idle player when the turn timer runs out', async () => {
-    const alex = await soloTurn('8 10 8 7 3 7', {}, { timing: { turnMs: 150, bettingMs: 5000 } });
-    alex.send({ type: 'action', action: 'split' });
-    const settled = await alex.waitForState((s) => s.phase === 'settle', 4000);
-    expect(alex.me(settled).hands.map((x) => x.status)).toEqual(['stood', 'stood']);
-    expect(settled.log.filter((l) => l.text.includes('ran out of time')).length).toBe(2);
-    expect(alex.me(settled).chips).toBe(800); // 11 and 15 both lose to 17: 1000 - 200
-  });
-});
-
-describe('shoe reshuffles', () => {
-  it('counts reshuffles in table_state so clients can play a sound', async () => {
-    const { srv } = await h.boot();
-    const alex = await h.client(srv);
-    await alex.join('Alex', { hostToken: srv.hostToken });
-    alex.send({ type: 'update_settings', settings: { decks: 1 } });
-    await alex.waitForState((s) => s.settings.decks === 1);
-    expect(alex.state!.shuffles).toBe(0);
-    alex.send({ type: 'set_ready', ready: true });
-    alex.autoPlay(10, () => 'stand');
-    alex.send({ type: 'start_game' });
-    // A single deck is 75% dealt after a few rounds, so the shoe is reshuffled before long.
-    const st = await alex.waitForState((s) => s.shuffles >= 1, 12000);
-    expect(st.shuffles).toBeGreaterThanOrEqual(1);
-    expect(st.log.some((l) => l.text.includes('Shuffling a new shoe'))).toBe(true);
-  });
-});
-
-describe('borrowing', () => {
-  it('lets a player with no chips borrow a buy-in, keeps the debt across a restart, and clears it on reset', async () => {
-    const rigged = cards('10 10 8 9'); // Alex 18 against 19
-    const first = await h.boot({ rigged, timing: { settleMs: 200, bettingMs: 5000, turnMs: 5000 } });
-    const alex = await h.client(first.srv);
-    await alex.join('Alex', { hostToken: first.srv.hostToken });
-    alex.send({ type: 'set_ready', ready: true });
-    alex.send({ type: 'start_game' });
-    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
+describe('borrowing and paying back', () => {
+  it('lets a player who lost everything borrow a buy-in, keeps the debt across a restart and pays it back', async () => {
+    // The big blind gets aces and wins; the button goes all in and loses everything.
+    const rigged = [headsUp('AS AH', '2D 7C', '9H 9S KD 4C 3H')];
+    const first = await twoPlayers({ rigged, timing: { potMs: 300, turnMs: 5000 } });
+    const clients = [first.alex, first.bob];
+    first.alex.send({ type: 'start_game' });
+    const s = await first.alex.waitForState((st) => st.turn !== null);
+    const loser = inSeat(clients, s, s.buttonSeat);
+    const winner = clients.find((c) => c !== loser)!;
+    const name = loser.me(s).name;
 
     // With chips left there is nothing to borrow.
-    expect((await alex.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
+    expect((await loser.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
+    await loser.waitForTurn();
+    loser.send({ type: 'action', action: 'all_in' });
+    await winner.waitForTurn();
+    winner.send({ type: 'action', action: 'call' });
 
-    alex.send({ type: 'place_bet', amount: 1000 }); // all in, and lose
-    await alex.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
-    alex.send({ type: 'action', action: 'stand' });
-    const lost = await alex.waitForState((s) => s.phase === 'settle');
-    expect(alex.me(lost).chips).toBe(0);
-    expect(alex.me(lost).debt).toBe(0);
-    expect(alex.me(lost).earnings).toBe(-1000);
+    // Not while the hand is still being shown down.
+    await loser.waitForState((st) => st.phase === 'showdown');
+    expect((await loser.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
+    const lost = await loser.waitForState((st) => st.phase === 'hand_over');
+    expect(loser.me(lost)).toMatchObject({ chips: 0, debt: 0, earnings: -1000 });
+    // Only one player has chips, so the table waits.
+    const waiting = await loser.waitForState((st) => st.phase === 'waiting');
+    expect(loser.me(waiting).chips).toBe(0);
 
-    // Not while results are showing, only while bets are being placed.
-    expect((await alex.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
-    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-
-    alex.send({ type: 'borrow' });
-    const borrowed = await alex.waitForState((s) => alex.me(s).debt === 1000);
-    expect(alex.me(borrowed).chips).toBe(1000);
-    expect(alex.me(borrowed).earnings).toBe(-1000); // borrowing is not a win
-    expect(borrowed.log.some((e) => e.text === 'Alex borrows 1,000 and now owes 1,000')).toBe(true);
-    expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))).toEqual({
-      Alex: { chips: 1000, debt: 1000, earnings: -1000 },
+    loser.send({ type: 'borrow' });
+    const borrowed = await loser.waitForState((st) => loser.me(st).debt === 1000);
+    expect(loser.me(borrowed).chips + loser.me(borrowed).bet).toBe(1000);
+    expect(loser.me(borrowed).earnings).toBe(-1000); // borrowing is not a win
+    expect(borrowed.log.some((e) => e.text === `${name} borrows 1,000 and now owes 1,000`)).toBe(true);
+    expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))[name]).toEqual({
+      chips: 1000,
+      debt: 1000,
+      earnings: -1000,
     });
 
-    // Chips in hand again, so a second loan is refused.
-    expect((await alex.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
+    // Borrowing let a new hand start, and paying back must wait until the player is out of it.
+    await loser.waitForState((st) => st.phase === 'preflop' && st.hand === 2);
+    expect((await loser.expectError({ type: 'pay_back' })).code).toBe('cannot_pay_back');
+    expect((await loser.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
 
     // The tab survives a restart.
     await first.srv.close();
     const second = await h.boot({}, first.dataDir);
     const back = await h.client(second.srv);
-    await back.join('Alex');
-    expect(back.me().chips).toBe(1000);
-    expect(back.me().debt).toBe(1000);
-    expect(back.me().earnings).toBe(-1000);
+    await back.join(name);
+    expect(back.me()).toMatchObject({ chips: 1000, debt: 1000, earnings: -1000 });
 
-    // Resetting chips wipes the tab.
+    // Paying back takes the chips and leaves the earnings alone.
+    back.send({ type: 'pay_back' });
+    const paid = await back.waitForState((st) => back.me(st).debt === 0);
+    expect(back.me(paid)).toMatchObject({ chips: 0, debt: 0, earnings: -1000 });
+    expect(paid.log.some((e) => e.text === `${name} pays back 1,000 and owes nothing`)).toBe(true);
+    expect((await back.expectError({ type: 'pay_back' })).code).toBe('cannot_pay_back');
+
+    // Resetting chips wipes the earnings too.
     back.send({ type: 'reset_chips' });
-    await back.waitForState((s) => back.me(s).debt === 0);
+    await back.waitForState((st) => back.me(st).chips === 1000);
     expect(back.me().earnings).toBe(0);
-    expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8')).Alex).toBe(1000);
+    expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))[name]).toBe(1000);
   });
 });
 
@@ -850,8 +713,8 @@ describe('closing the game', () => {
     const bob = await h.client(srv);
     await alex.join('Alex', { hostToken: srv.hostToken });
     await bob.join('Bob');
-    alex.send({ type: 'update_settings', settings: { startingChips: 2000, minBet: 50 } });
-    await alex.waitForState((s) => s.settings.minBet === 50);
+    alex.send({ type: 'update_settings', settings: { startingChips: 2000, bigBlind: 50 } });
+    await alex.waitForState((s) => s.settings.bigBlind === 50);
 
     // The game stays open while someone is still at the table.
     alex.send({ type: 'leave' });
@@ -869,66 +732,37 @@ describe('closing the game', () => {
     // Players without the host token can't join any more.
     const carol = await h.client(srv);
     expect(carol.all.find((m) => m.type === 'server_info')).toMatchObject({ gameOpen: false });
-    const refused = await carol.join('Carol');
-    expect(refused).toMatchObject({ type: 'error', code: 'game_closed' });
+    expect(await carol.join('Carol')).toMatchObject({ type: 'error', code: 'game_closed' });
 
-    // The host link creates a fresh game: default settings, empty log, round 0.
+    // The host link creates a fresh game: default settings, empty log, hand 0.
     const host = await h.client(srv);
-    const joined = await host.join('Alex', { hostToken: srv.hostToken });
-    expect(joined).toMatchObject({ type: 'joined', isHost: true });
+    expect(await host.join('Alex', { hostToken: srv.hostToken })).toMatchObject({ type: 'joined', isHost: true });
     const fresh = host.state!;
     expect(fresh.phase).toBe('waiting');
-    expect(fresh.round).toBe(0);
-    expect(fresh.settings.minBet).toBe(10);
+    expect(fresh.hand).toBe(0);
+    expect(fresh.settings.bigBlind).toBe(10);
     expect(fresh.settings.startingChips).toBe(1000);
     expect(fresh.log.map((l) => l.text)).toEqual(['Alex joined']);
-    await waitUntil(() => waiting.all.filter((m) => m.type === 'server_info').pop()?.type === 'server_info' && (waiting.all.filter((m) => m.type === 'server_info').pop() as { gameOpen: boolean }).gameOpen, 3000, 'game open info');
+    await waitUntil(() => {
+      const last = waiting.all.filter((m) => m.type === 'server_info').pop();
+      return last?.type === 'server_info' && last.gameOpen;
+    }, 3000, 'game open info');
 
     // Now everyone may join again.
     expect(await carol.join('Carol')).toMatchObject({ type: 'joined' });
   });
 
-  it('ends the game after the round when the last player leaves in the middle of a hand', async () => {
-    const rigged = cards('10 10 9 7');
-    const { srv } = await h.boot({ rigged, timing: { settleMs: 150, bettingMs: 5000, turnMs: 5000 } });
-    const alex = await h.client(srv);
-    await alex.join('Alex', { hostToken: srv.hostToken });
-    alex.send({ type: 'set_ready', ready: true });
+  it('ends the game after the hand when the last players leave in the middle of it', async () => {
+    const { srv, alex, bob } = await twoPlayers({ timing: { turnMs: 5000, foldWinMs: 200 } });
     alex.send({ type: 'start_game' });
-    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-    alex.send({ type: 'place_bet', amount: 100 });
-    await alex.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
+    await alex.waitForState((s) => s.turn !== null);
     const late = await h.client(srv);
     alex.send({ type: 'leave' });
-    // The round finishes first, then the empty table closes and the waiting client is told.
+    await bob.waitForState((s) => s.phase === 'hand_over');
+    bob.send({ type: 'leave' });
+    // The hand finishes first, then the empty table closes and the waiting client is told.
     await waitUntil(() => late.all.some((m) => m.type === 'server_info' && !m.gameOpen), 5000, 'game closed info');
     expect(await late.join('Late')).toMatchObject({ type: 'error', code: 'game_closed' });
-  });
-});
-
-describe('paying back', () => {
-  it('pays borrowed chips back out of the chips without touching the earnings, and only before betting', async () => {
-    const rigged = cards('10 10 8 9'); // Alex 18 against 19
-    const { srv } = await h.boot({ rigged, timing: { settleMs: 150, bettingMs: 5000, turnMs: 5000 } });
-    const alex = await h.client(srv);
-    await alex.join('Alex', { hostToken: srv.hostToken });
-    expect((await alex.expectError({ type: 'pay_back' })).code).toBe('cannot_pay_back'); // owes nothing
-    alex.send({ type: 'set_ready', ready: true });
-    alex.send({ type: 'start_game' });
-    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-    alex.send({ type: 'place_bet', amount: 1000 });
-    await alex.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
-    alex.send({ type: 'action', action: 'stand' });
-    await alex.waitForState((s) => s.phase === 'settle');
-    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
-    alex.send({ type: 'borrow' });
-    await alex.waitForState((s) => alex.me(s).debt === 1000);
-
-    // The loan came in as chips, so paying it back takes those chips away again.
-    alex.send({ type: 'pay_back' });
-    const paid = await alex.waitForState((s) => alex.me(s).debt === 0);
-    expect(alex.me(paid)).toMatchObject({ chips: 0, debt: 0, earnings: -1000 });
-    expect(paid.log.some((e) => e.text === 'Alex pays back 1,000 and owes nothing')).toBe(true);
-    expect((await alex.expectError({ type: 'pay_back' })).code).toBe('cannot_pay_back');
+    await sleep(20);
   });
 });

@@ -1,39 +1,32 @@
-// The one table: players, seats, settings, round flow and timers.
-// It talks to clients only through the small `Connection` interface, and all card rules live in game.ts.
+// The one table: players, seats, button, settings, timers and the flow of each hand.
+// It talks to clients only through the small `Connection` interface. All betting rules live in
+// game.ts and all hand ranking in hand.ts.
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   DEFAULT_SETTINGS,
   USERNAME_PATTERN,
+  cardText,
   validateSettings,
-  type ActionName,
+  type ActionKind,
   type Card,
   type CardView,
   type ClientMsg,
-  type DealerView,
   type ErrorCode,
-  type HandStatus,
-  type HandView,
+  type HandResult,
   type LogEntry,
-  type Outcome,
   type Phase,
   type PlayerView,
+  type PotView,
   type PublicSettings,
-  type RoundResultEntry,
   type ServerMsg,
   type Settings,
   type TableState,
+  type YouView,
 } from '../shared/types.js';
-import { Shoe, mulberry32, randomSeed } from './deck.js';
-import {
-  canDouble,
-  canSplit,
-  dealerShouldHit,
-  handValue,
-  isBlackjack,
-  isTenValue,
-  settleHand,
-} from './game.js';
+import { Deck, mulberry32, randomSeed } from './deck.js';
+import { HoldemHand, type HandOutcome } from './game.js';
+import { bestHand, inSentence } from './hand.js';
 import type { PlayerStore } from './store.js';
 
 /** One client connection. The WebSocket layer implements this; tests can use a fake. */
@@ -42,28 +35,37 @@ export interface Connection {
   close(): void;
 }
 
+/** Pause after a hand that went to showdown, before the next hand. */
+export const SHOWDOWN_PAUSE_MS = 4000;
+/** Pause after a hand won because everyone else folded. */
+export const FOLD_WIN_PAUSE_MS = 2000;
+
 export interface Timing {
-  /** Gap between dealt cards. */
+  /** Gap between hole cards being dealt. */
   dealMs: number;
-  /** Pause before the dealer reveals and between dealer draws. */
-  dealerStepMs: number;
-  /** How long round results stay on screen. */
-  settleMs: number;
+  /** Pause before the flop, turn and river. */
+  streetMs: number;
+  /** Pause between streets when everyone is all in and the board is run out. */
+  runoutMs: number;
+  /** Gap between pots being pushed to their winners at showdown. */
+  potMs: number;
+  /** How long results stay on screen after a showdown. */
+  showdownMs: number;
+  /** How long results stay on screen after a hand won without a showdown. */
+  foldWinMs: number;
   /** How long a disconnected player's seat is held. */
   holdMs: number;
-  /** Test override for the betting timer; the setting is used when absent. */
-  bettingMs?: number;
   /** Test override for the turn timer; ignored when the host turned the turn timer off. */
   turnMs?: number;
 }
 
-/** How long results stay on screen before the next betting phase starts. */
-export const ROUND_PAUSE_MS = 2000;
-
 export const DEFAULT_TIMING: Timing = {
   dealMs: 300,
-  dealerStepMs: 800,
-  settleMs: ROUND_PAUSE_MS,
+  streetMs: 600,
+  runoutMs: 1000,
+  potMs: 900,
+  showdownMs: SHOWDOWN_PAUSE_MS,
+  foldWinMs: FOLD_WIN_PAUSE_MS,
   holdMs: 20_000,
 };
 
@@ -71,32 +73,11 @@ export interface TableOptions {
   store: PlayerStore;
   hostToken: string;
   timing?: Partial<Timing>;
-  /** Seed for the shoe shuffle. Random when absent. */
+  /** Seed for the shuffles. Each hand is seeded from the operating system's randomness when absent. */
   seed?: number;
-  /** Cards dealt first, in order. For tests only. */
-  rigged?: Card[];
+  /** Cards dealt first in each hand: rigged[0] for hand 1, rigged[1] for hand 2... For tests only. */
+  rigged?: Card[][];
   log?: (message: string) => void;
-}
-
-/** One hand of a round. A player has one hand, or two after a split. */
-interface Hand {
-  cards: Card[];
-  bet: number;
-  status: HandStatus;
-  doubled: boolean;
-  allIn: boolean;
-  fromSplit: boolean;
-  outcome: Outcome | null;
-  delta: number | null;
-}
-
-function newHand(bet: number, allIn = false): Hand {
-  return { cards: [], bet, status: 'none', doubled: false, allIn, fromSplit: false, outcome: null, delta: null };
-}
-
-/** Whether the player has placed a bet for the coming round. */
-function hasBet(p: { hands: Hand[] }): boolean {
-  return (p.hands[0]?.bet ?? 0) > 0;
 }
 
 interface Player {
@@ -104,6 +85,7 @@ interface Player {
   name: string;
   key: string;
   token: string;
+  /** The stack. During a hand it follows the engine, so it does not include chips put in. */
   chips: number;
   /** Borrowed chips not paid back. Saved with the chips. */
   debt: number;
@@ -113,21 +95,14 @@ interface Player {
   seat: number | null;
   conn: Connection | null;
   holdTimer: NodeJS.Timeout | null;
-  /** Set when the player left, was kicked, or lost the seat hold while a hand is live. Removed after the round. */
+  /** Left, was kicked, or lost the seat hold while in a hand. Removed once the hand is over. */
   leaving: boolean;
-  /** Empty until the player bets. The bet is hands[0].bet during betting; a split adds a second hand. */
-  hands: Hand[];
-  /** Index of the hand being played. */
-  activeHand: number;
-  inRound: boolean;
+  sittingOut: boolean;
 }
 
-const LOG_LIMIT = 30;
+const LOG_LIMIT = 40;
 const MAX_NAME_LEN = 16;
-
-function rankText(card: Card): string {
-  return card.rank;
-}
+const n = (x: number) => x.toLocaleString('en-US');
 
 function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
@@ -135,44 +110,56 @@ function safeEqual(a: string, b: string): boolean {
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
+const ACTIONS: ActionKind[] = ['fold', 'check', 'call', 'bet', 'raise', 'all_in'];
+const BETTING_PHASES: Phase[] = ['preflop', 'flop', 'turn', 'river'];
+
 export class Table {
   private settings: Settings = { ...DEFAULT_SETTINGS };
   private phase: Phase = 'waiting';
   private started = false;
-  private round = 0;
+  private handNo = 0;
   private hostId: string | null = null;
   private readonly players = new Map<string, Player>();
   private seats: (string | null)[] = Array(DEFAULT_SETTINGS.maxPlayers).fill(null);
   private readonly connections = new Set<Connection>();
   private readonly bound = new Map<Connection, string>();
   private readonly kickedKeys = new Set<string>();
-  private dealerCards: Card[] = [];
-  private dealerRevealed = false;
   private turn: string | null = null;
   private deadline: number | null = null;
-  private shoe: Shoe | null = null;
   private flow: NodeJS.Timeout | null = null;
   private logEntries: LogEntry[] = [];
   private logId = 0;
-  private noBetsLogged = false;
-  /** Counts reshuffles, so clients can play a sound when it goes up. */
-  private shuffles = 0;
+  private waitingLogged = false;
   private closed = false;
   /** False after the last player left: only the host link can open a new game. */
   private gameOpen = true;
 
+  // ---- the current hand
+  private eng: HoldemHand | null = null;
+  private buttonSeat: number | null = null;
+  /** Seat of each player in the hand, by engine index. */
+  private handSeats: number[] = [];
+  /** Hole cards dealt so far, counted one at a time round the table. */
+  private holeShown = 0;
+  private dealing = false;
+  /** Players whose hole cards are face up for everyone. */
+  private readonly revealed = new Set<string>();
+  private outcome: HandOutcome | null = null;
+  private result: HandResult | null = null;
+  private potsAwarded = 0;
+
   private readonly store: PlayerStore;
   private readonly hostToken: string;
   private readonly timing: Timing;
-  private readonly rng: () => number;
-  private readonly rigged: Card[];
+  private readonly seedRng: (() => number) | null;
+  private readonly rigged: Card[][];
   private readonly logger: (message: string) => void;
 
   constructor(options: TableOptions) {
     this.store = options.store;
     this.hostToken = options.hostToken;
     this.timing = { ...DEFAULT_TIMING, ...options.timing };
-    this.rng = mulberry32(options.seed ?? randomSeed());
+    this.seedRng = options.seed === undefined ? null : mulberry32(options.seed);
     this.rigged = options.rigged ?? [];
     this.logger = options.log ?? ((m) => console.error(m));
   }
@@ -203,7 +190,6 @@ export class Table {
       this.armTurnTimer(p);
     }
     this.broadcast();
-    this.checkBettingDone();
   }
 
   /** Stops all timers. Connections are closed by the caller. */
@@ -252,10 +238,10 @@ export class Table {
         return this.onUpdateSettings(conn, p, msg.settings);
       case 'start_game':
         return this.onStartGame(conn, p);
-      case 'place_bet':
-        return this.onPlaceBet(conn, p, msg.amount);
       case 'action':
-        return this.onAction(conn, p, msg.action);
+        return this.onAction(conn, p, msg.action, msg.amount);
+      case 'sit_out':
+        return this.onSitOut(conn, p, msg.sittingOut);
       case 'reset_chips':
         return this.onResetChips(conn, p);
       case 'borrow':
@@ -332,9 +318,7 @@ export class Table {
       conn,
       holdTimer: null,
       leaving: false,
-      hands: [],
-      activeHand: 0,
-      inRound: false,
+      sittingOut: false,
     };
     this.players.set(p.id, p);
     this.bound.set(conn, p.id);
@@ -343,12 +327,10 @@ export class Table {
     this.addLog(`${p.name} joined`);
     conn.send({ type: 'joined', playerId: p.id, reconnectToken: p.token, isHost: this.hostId === p.id });
 
-    // A table that went idle because it was empty starts a betting phase for the newcomer.
-    if (this.started && this.phase === 'betting' && this.deadline === null) {
-      this.beginBetting();
-    } else {
-      this.broadcast();
-    }
+    // A game in progress gives the newcomer a free seat; they are dealt in from the next hand.
+    if (this.started) this.assignSeats();
+    this.broadcast();
+    this.maybeStartHand();
   }
 
   private reconnect(conn: Connection, p: Player, asHost: boolean): void {
@@ -370,6 +352,7 @@ export class Table {
       this.deadline = null;
     }
     this.broadcast();
+    this.maybeStartHand();
   }
 
   // --------------------------------------------------------- leave and drop
@@ -398,28 +381,56 @@ export class Table {
     p.holdTimer = null;
   }
 
-  private handIsLive(p: Player): boolean {
-    return p.inRound && (this.phase === 'dealing' || this.phase === 'player_turns' || this.phase === 'dealer_turn');
+  /** Dealt into the hand that is being played or shown right now. */
+  private inHand(p: Player): boolean {
+    return this.eng !== null && this.phase !== 'waiting' && this.eng.player(p.id) !== undefined;
   }
 
-  /** Removes a player now, or marks them to be removed after the round when their hand is still live. */
+  /** In a hand that is not over yet, so reset, pay back and borrow must wait. */
+  private inLiveHand(p: Player): boolean {
+    return this.inHand(p) && this.phase !== 'hand_over';
+  }
+
+  /** Removes a player now, or folds their hand and removes them once the hand is over. */
   private dropPlayer(p: Player): void {
     this.clearHold(p);
-    if (this.handIsLive(p)) {
+    if (this.inLiveHand(p)) {
       p.leaving = true;
-      if (this.turn === p.id) this.autoStand(p, 'left the table');
-      else this.broadcast();
+      this.foldOutOfTurn(p);
+      return;
+    }
+    if (this.inHand(p)) {
+      p.leaving = true; // the results are still on screen; removed when the next hand starts
+      this.broadcast();
       return;
     }
     this.removePlayer(p);
   }
 
-  private removePlayer(p: Player): void {
-    // A bet placed for a round that has not been dealt is given back.
-    if (this.phase === 'betting' && hasBet(p)) {
-      p.chips += p.hands[0]!.bet;
-      p.hands = [];
+  /** Folds a player's hand at once, also when it is not their turn. Their chips stay in the pot. */
+  private foldOutOfTurn(p: Player): void {
+    const eng = this.eng!;
+    const before = { status: eng.status, toAct: eng.toAct };
+    const r = eng.forceFold(p.id);
+    if (!r.ok) {
+      this.broadcast();
+      return;
     }
+    this.addLog(`${p.name} folds`);
+    this.logUncalled(r.uncalled);
+    if (this.dealing) {
+      this.syncChips();
+      this.broadcast(); // the deal goes on; its last step looks at the hand again
+      return;
+    }
+    if (eng.status !== before.status || eng.toAct !== before.toAct) this.afterChange();
+    else {
+      this.syncChips();
+      this.broadcast();
+    }
+  }
+
+  private removePlayer(p: Player): void {
     this.store.set(p.name, p.chips, p.debt, p.earnings);
     this.store.save();
     this.clearHold(p);
@@ -434,8 +445,8 @@ export class Table {
       this.endGame();
       return;
     }
+    if (this.started) this.assignSeats(); // a watcher takes the free seat
     this.broadcast();
-    this.checkBettingDone();
   }
 
   /** The last player left: forget this game completely. A new one needs the host link. */
@@ -445,18 +456,16 @@ export class Table {
     this.settings = { ...DEFAULT_SETTINGS };
     this.phase = 'waiting';
     this.started = false;
-    this.round = 0;
+    this.handNo = 0;
     this.hostId = null;
     this.seats = Array(DEFAULT_SETTINGS.maxPlayers).fill(null);
     this.kickedKeys.clear();
-    this.dealerCards = [];
-    this.dealerRevealed = false;
     this.turn = null;
     this.deadline = null;
-    this.shoe = null;
     this.logEntries = [];
-    this.noBetsLogged = false;
-    this.shuffles = 0;
+    this.waitingLogged = false;
+    this.buttonSeat = null;
+    this.clearHand();
     this.tellUnjoined();
   }
 
@@ -477,10 +486,10 @@ export class Table {
     }
   }
 
-  // ---------------------------------------------------------------- waiting
+  // ---------------------------------------------------------- waiting room
 
   private onSetReady(conn: Connection, p: Player, ready: unknown): void {
-    if (this.phase !== 'waiting') return this.sendError(conn, 'wrong_phase', 'Ready only applies in the waiting room');
+    if (this.started) return this.sendError(conn, 'wrong_phase', 'Ready only applies in the waiting room');
     if (typeof ready !== 'boolean') return this.sendError(conn, 'bad_message', 'ready must be true or false');
     p.ready = ready;
     this.broadcast();
@@ -488,9 +497,7 @@ export class Table {
 
   private onUpdateSettings(conn: Connection, p: Player, patch: unknown): void {
     if (this.hostId !== p.id) return this.sendError(conn, 'not_host', 'Only the host can change settings');
-    if (this.started || this.phase !== 'waiting') {
-      return this.sendError(conn, 'settings_locked', 'Settings are locked once the game has started');
-    }
+    if (this.started) return this.sendError(conn, 'settings_locked', 'Settings are locked once the game has started');
     if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) {
       return this.sendError(conn, 'invalid_settings', 'Settings must be an object');
     }
@@ -511,23 +518,18 @@ export class Table {
 
   private onStartGame(conn: Connection, p: Player): void {
     if (this.hostId !== p.id) return this.sendError(conn, 'not_host', 'Only the host can start the game');
-    if (this.started || this.phase !== 'waiting') return this.sendError(conn, 'wrong_phase', 'The game has already started');
-    if (![...this.players.values()].some((x) => x.ready)) {
-      return this.sendError(conn, 'cannot_start', 'At least one player must be ready');
+    if (this.started) return this.sendError(conn, 'wrong_phase', 'The game has already started');
+    if ([...this.players.values()].filter((x) => x.ready).length < 2) {
+      return this.sendError(conn, 'cannot_start', 'At least two players must be ready');
     }
     this.started = true;
-    this.shoe = new Shoe(this.settings.decks, this.rng, this.rigged);
+    this.assignSeats();
     this.addLog('The game has started');
-    this.beginBetting();
+    this.broadcast();
+    this.maybeStartHand();
   }
 
-  // ---------------------------------------------------------------- betting
-
-  private resetHand(p: Player): void {
-    p.hands = [];
-    p.activeHand = 0;
-    p.inRound = false;
-  }
+  // ------------------------------------------------------------ seats, chips
 
   private assignSeats(): void {
     for (const p of this.players.values()) {
@@ -545,222 +547,306 @@ export class Table {
       .filter((p): p is Player => p !== undefined);
   }
 
-  private beginBetting(): void {
-    this.clearFlow();
-    this.phase = 'betting';
-    this.turn = null;
-    this.deadline = null;
-    for (const p of this.players.values()) this.resetHand(p);
-    this.dealerCards = [];
-    this.dealerRevealed = false;
-
-    if (this.shoe && this.shoe.needsReshuffle()) {
-      this.shoe.shuffle();
-      this.shuffles++;
-      this.addLog('Shuffling a new shoe');
-    }
-    this.assignSeats();
-
-    if (this.players.size === 0) {
-      this.broadcast(); // idle until someone joins
-      return;
-    }
-    const ms = this.bettingMs();
-    this.deadline = Date.now() + ms;
-    if (!this.noBetsLogged) this.addLog(`Round ${this.round + 1}: place your bets`);
-    this.setFlow(() => this.endBetting(), ms);
-    this.broadcast();
+  /** Seated, here, has chips and is not sitting out. */
+  private canPlay(p: Player): boolean {
+    return p.seat !== null && !p.leaving && !p.sittingOut && p.conn !== null && p.chips > 0;
   }
 
-  private bettingMs(): number {
-    return this.timing.bettingMs ?? this.settings.bettingSeconds * 1000;
-  }
-
-  private canBet(p: Player): boolean {
-    return p.seat !== null && !p.leaving && p.conn !== null && p.chips >= this.settings.minBet;
-  }
-
-  /** Ends the betting phase early once every player who is able to bet has bet. */
-  private checkBettingDone(): void {
-    if (this.phase !== 'betting' || this.deadline === null) return;
-    const able = this.seatedInOrder().filter((p) => this.canBet(p) || hasBet(p));
-    if (able.length > 0 && able.every((p) => hasBet(p))) this.endBetting();
-  }
-
-  private onPlaceBet(conn: Connection, p: Player, amount: unknown): void {
-    if (this.phase !== 'betting' || this.deadline === null) {
-      return this.sendError(conn, 'wrong_phase', 'Bets are only taken during the betting phase');
-    }
+  private onSitOut(conn: Connection, p: Player, sittingOut: unknown): void {
+    if (typeof sittingOut !== 'boolean') return this.sendError(conn, 'bad_message', 'sittingOut must be true or false');
     if (p.seat === null) return this.sendError(conn, 'not_seated', 'You do not have a seat yet');
-    if (hasBet(p)) return this.sendError(conn, 'already_bet', 'You have already bet this round');
-    if (typeof amount !== 'number' || !Number.isInteger(amount)) {
-      return this.sendError(conn, 'bet_invalid', 'A bet must be a whole number');
-    }
-    const { minBet } = this.settings;
-    if (amount < minBet) {
-      return this.sendError(conn, 'bet_invalid', `The minimum bet is ${minBet}`);
-    }
-    if (amount > p.chips) return this.sendError(conn, 'insufficient_chips', 'You do not have enough chips');
-    const allIn = amount === p.chips;
-    p.chips -= amount;
-    p.hands = [newHand(amount, allIn)];
-    this.addLog(allIn ? `${p.name} goes all in (${amount.toLocaleString('en-US')})` : `${p.name} bets ${amount}`);
+    if (p.sittingOut === sittingOut) return this.broadcast();
+    p.sittingOut = sittingOut;
+    this.addLog(sittingOut ? `${p.name} sits out from the next hand` : `${p.name} is back in from the next hand`);
     this.broadcast();
-    this.checkBettingDone();
+    this.maybeStartHand();
+  }
+
+  private saveChips(p: Player): void {
+    this.store.set(p.name, p.chips, p.debt, p.earnings);
+    this.store.save();
   }
 
   private onResetChips(conn: Connection, p: Player): void {
-    const ok = this.phase === 'waiting' || (this.phase === 'betting' && !hasBet(p));
-    if (!ok) {
-      return this.sendError(conn, 'cannot_reset', 'Chips can only be reset in the waiting room or before you bet');
+    if (this.inLiveHand(p)) {
+      return this.sendError(conn, 'cannot_reset', 'You can reset your chips once you are not in a hand');
     }
     p.chips = this.settings.startingChips;
     p.debt = 0; // a reset is a fresh start, so any loan and the earnings are wiped too
     p.earnings = 0;
-    this.store.set(p.name, p.chips, p.debt, p.earnings);
-    this.store.save();
-    this.addLog(`${p.name} reset their chips to ${p.chips}`);
+    this.saveChips(p);
+    this.addLog(`${p.name} reset their chips to ${n(p.chips)}`);
     this.broadcast();
+    this.maybeStartHand();
   }
 
   /** Pays borrowed chips back out of the player's chips, as much as the chips allow. */
   private onPayBack(conn: Connection, p: Player): void {
-    const ok = this.phase === 'waiting' || (this.phase === 'betting' && !hasBet(p));
-    if (!ok) return this.sendError(conn, 'cannot_pay_back', 'You can only pay back in the waiting room or before you bet');
+    if (this.inLiveHand(p)) {
+      return this.sendError(conn, 'cannot_pay_back', 'You can pay back once you are not in a hand');
+    }
     if (p.debt <= 0) return this.sendError(conn, 'cannot_pay_back', 'You do not owe anything');
     if (p.chips <= 0) return this.sendError(conn, 'cannot_pay_back', 'You have no chips to pay back with');
     const amount = Math.min(p.chips, p.debt);
     p.chips -= amount;
     p.debt -= amount;
-    this.store.set(p.name, p.chips, p.debt, p.earnings);
-    this.store.save();
-    const n = (x: number) => x.toLocaleString('en-US');
+    this.saveChips(p);
     this.addLog(p.debt > 0 ? `${p.name} pays back ${n(amount)} and still owes ${n(p.debt)}` : `${p.name} pays back ${n(amount)} and owes nothing`);
     this.broadcast();
-    this.checkBettingDone(); // paying back can leave the player without chips to bet
   }
 
-  /** A player who is out of chips borrows a buy-in (the starting chips) and owes it. */
+  /** A seated player who is out of chips borrows a buy-in (the starting chips) and owes it. */
   private onBorrow(conn: Connection, p: Player): void {
-    if (this.phase !== 'betting' || this.deadline === null) {
-      return this.sendError(conn, 'cannot_borrow', 'You can only borrow chips while bets are being placed');
-    }
-    if (p.seat === null) return this.sendError(conn, 'not_seated', 'You do not have a seat yet');
-    if (hasBet(p) || p.chips >= this.settings.minBet) {
-      return this.sendError(conn, 'cannot_borrow', 'You can only borrow when you are out of chips');
-    }
+    if (p.seat === null) return this.sendError(conn, 'cannot_borrow', 'You need a seat to borrow chips');
+    if (p.chips > 0) return this.sendError(conn, 'cannot_borrow', 'You can only borrow when you are out of chips');
+    if (this.inLiveHand(p)) return this.sendError(conn, 'cannot_borrow', 'You can borrow once the hand is over');
     const amount = this.settings.startingChips;
     p.chips += amount;
     p.debt += amount;
-    this.store.set(p.name, p.chips, p.debt, p.earnings);
-    this.store.save();
-    const n = (x: number) => x.toLocaleString('en-US');
+    this.saveChips(p);
     this.addLog(`${p.name} borrows ${n(amount)} and now owes ${n(p.debt)}`);
     this.broadcast();
+    this.maybeStartHand();
   }
 
-  private endBetting(): void {
-    this.clearFlow();
-    const active = this.seatedInOrder().filter((p) => hasBet(p));
-    if (active.length === 0) {
-      if (!this.noBetsLogged) this.addLog('No bets were placed');
-      this.noBetsLogged = true;
-      this.beginBetting();
+  // ------------------------------------------------------------------ hands
+
+  private clearHand(): void {
+    this.eng = null;
+    this.handSeats = [];
+    this.holeShown = 0;
+    this.dealing = false;
+    this.revealed.clear();
+    this.outcome = null;
+    this.result = null;
+    this.potsAwarded = 0;
+  }
+
+  /** Starts a hand if the table is idle and at least two players can play. */
+  private maybeStartHand(): void {
+    if (!this.started || this.phase !== 'waiting' || this.closed || !this.gameOpen) return;
+    this.assignSeats();
+    const dealt = this.seatedInOrder().filter((p) => this.canPlay(p));
+    if (dealt.length < 2) {
+      if (!this.waitingLogged) {
+        this.waitingLogged = true;
+        this.addLog('Waiting for players');
+        this.broadcast();
+      }
       return;
     }
-    this.noBetsLogged = false;
-    this.startDeal(active);
+    this.waitingLogged = false;
+    this.startHand(dealt);
   }
 
-  // ------------------------------------------------------------------- deal
-
-  private cardsOnTable(): Card[] {
-    const cards = [...this.dealerCards];
-    for (const p of this.players.values()) for (const hd of p.hands) cards.push(...hd.cards);
-    return cards;
+  private handSeed(): number {
+    return this.seedRng ? Math.floor(this.seedRng() * 2 ** 32) : randomSeed();
   }
 
-  private drawCard(): Card {
-    const shoe = this.shoe!;
-    const card = shoe.draw(this.cardsOnTable());
-    if (shoe.autoReshuffled) {
-      shoe.autoReshuffled = false;
-      this.shuffles++;
-      this.addLog('The shoe ran out, shuffling a new one');
+  private startHand(dealt: Player[]): void {
+    this.clearFlow();
+    this.clearHand();
+    this.handNo++;
+
+    // The button moves to the next dealt-in player on the left; the first hand picks one at random.
+    let button: number;
+    if (this.buttonSeat === null) {
+      button = Math.floor(mulberry32(this.handSeed())() * dealt.length);
+    } else {
+      const from = this.buttonSeat;
+      const after = dealt.findIndex((p) => p.seat! > from);
+      button = after >= 0 ? after : 0;
     }
-    return card;
-  }
+    this.buttonSeat = dealt[button]!.seat;
 
-  private startDeal(active: Player[]): void {
-    this.phase = 'dealing';
-    this.deadline = null;
+    const deck = new Deck(mulberry32(this.handSeed()), this.rigged[this.handNo - 1] ?? []);
+    const { smallBlind, bigBlind } = this.settings;
+    this.eng = new HoldemHand({
+      players: dealt.map((p) => ({ id: p.id, stack: p.chips })),
+      button,
+      smallBlind,
+      bigBlind,
+      draw: () => deck.draw(),
+    });
+    this.handSeats = dealt.map((p) => p.seat!);
+    this.syncChips();
+
+    const eng = this.eng;
+    const sb = dealt[eng.sbIndex]!;
+    const bb = dealt[eng.bbIndex]!;
+    this.addLog(`Hand ${this.handNo}: ${dealt[button]!.name} has the button`);
+    this.addLog(`${sb.name} posts the small blind ${n(eng.players[eng.sbIndex]!.totalIn)}`);
+    this.addLog(`${bb.name} posts the big blind ${n(eng.players[eng.bbIndex]!.totalIn)}`);
+
+    this.phase = 'preflop';
     this.turn = null;
-    this.round++;
-    for (const p of this.players.values()) {
-      p.inRound = hasBet(p);
-      for (const hd of p.hands) hd.status = 'playing';
-    }
-    const dealPlayer = (p: Player) => () => p.hands[0]!.cards.push(this.drawCard());
-    const dealDealer = () => this.dealerCards.push(this.drawCard());
-    const steps = [
-      ...active.map(dealPlayer),
-      dealDealer, // up card
-      ...active.map(dealPlayer),
-      dealDealer, // hole card, face down
-    ];
-    this.runDealSteps(steps, active, 0);
+    this.deadline = null;
+    this.dealing = true;
+    this.dealStep();
   }
 
-  private runDealSteps(steps: (() => void)[], active: Player[], i: number): void {
-    if (i >= steps.length) return this.afterDeal(active);
-    steps[i]!();
+  /** Deals the hole cards one at a time, then starts the betting. */
+  private dealStep(): void {
+    const eng = this.eng!;
+    if (this.holeShown >= eng.players.length * 2) {
+      this.dealing = false;
+      this.afterChange();
+      return;
+    }
+    this.holeShown++;
     this.broadcast();
-    this.setFlow(() => this.runDealSteps(steps, active, i + 1), this.timing.dealMs);
+    this.setFlow(() => this.dealStep(), this.timing.dealMs);
   }
 
-  private afterDeal(active: Player[]): void {
-    for (const p of active) {
-      if (isBlackjack(p.hands[0]!.cards)) {
-        p.hands[0]!.status = 'blackjack';
-        this.addLog(`${p.name} has blackjack`);
-      }
+  /** Copies the engine's stacks to the players in the hand. */
+  private syncChips(): void {
+    const eng = this.eng;
+    if (!eng) return;
+    for (const hp of eng.players) {
+      const p = this.players.get(hp.id);
+      if (p) p.chips = hp.stack;
     }
-    const up = this.dealerCards[0]!;
-    if (up.rank === 'A' || isTenValue(up)) {
-      if (isBlackjack(this.dealerCards)) {
-        this.phase = 'dealer_turn';
-        this.dealerRevealed = true;
-        this.addLog('Dealer has blackjack');
+  }
+
+  /** Looks at the engine after every change and moves the hand on. */
+  private afterChange(): void {
+    const eng = this.eng!;
+    this.syncChips();
+    this.turn = null;
+    this.deadline = null;
+    switch (eng.status) {
+      case 'betting': {
+        const p = this.players.get(eng.players[eng.toAct!]!.id)!;
+        this.turn = p.id;
+        this.armTurnTimer(p);
         this.broadcast();
-        this.setFlow(() => this.settle(), this.timing.dealerStepMs);
         return;
       }
-      this.addLog('Dealer checks the hole card: no blackjack');
+      case 'street_over': {
+        const runout = eng.isRunout();
+        if (runout) this.revealAll(false);
+        this.broadcast();
+        this.setFlow(() => this.dealStreet(), runout ? this.timing.runoutMs : this.timing.streetMs);
+        return;
+      }
+      case 'showdown':
+        return this.showdown();
+      case 'fold_win':
+        return this.foldWin();
+      default:
+        return;
     }
-    this.phase = 'player_turns';
-    this.advanceTurn();
   }
 
-  // ------------------------------------------------------------ player turns
-
-  private activePlayers(): Player[] {
-    return this.seatedInOrder().filter((p) => p.inRound);
+  private dealStreet(): void {
+    const eng = this.eng!;
+    const cards = eng.dealNext();
+    this.phase = eng.street;
+    const label = eng.street.charAt(0).toUpperCase() + eng.street.slice(1);
+    this.addLog(`${label}: ${cards.map(cardText).join(' ')}`);
+    this.afterChange();
   }
 
-  private advanceTurn(): void {
-    const next = this.activePlayers().find((p) => p.hands.some((hd) => hd.status === 'playing'));
-    if (!next) {
-      this.turn = null;
-      this.deadline = null;
-      this.dealerTurn();
+  /** Turns every hand still in face up. At showdown the log names the hands, in a runout it shows the cards. */
+  private revealAll(atShowdown: boolean): void {
+    const eng = this.eng!;
+    for (const hp of eng.live()) {
+      const p = this.players.get(hp.id);
+      const name = p?.name ?? 'A player';
+      if (atShowdown) {
+        this.addLog(`${name} shows ${inSentence(bestHand([...hp.hole, ...eng.board]).name)}`);
+      } else if (!this.revealed.has(hp.id)) {
+        this.addLog(`${name} shows ${hp.hole.map(cardText).join(' ')}`);
+      }
+      this.revealed.add(hp.id);
+    }
+  }
+
+  private showdown(): void {
+    this.phase = 'showdown';
+    this.revealAll(true);
+    this.settle();
+    this.broadcast();
+    // The hands stay face up for a moment before the first pot moves.
+    this.setFlow(() => this.awardNextPot(), this.timing.potMs);
+  }
+
+  private foldWin(): void {
+    this.settle();
+    this.potsAwarded = this.result!.pots.length;
+    const winner = this.players.get(this.result!.pots[0]!.winners[0]!);
+    const total = this.result!.pots.reduce((s, pot) => s + pot.amount, 0);
+    if (winner) this.addLog(`${winner.name} wins ${n(total)}`);
+    this.phase = 'hand_over';
+    this.broadcast();
+    this.setFlow(() => this.nextHand(), this.timing.foldWinMs);
+  }
+
+  /** Pays out every pot, updates the chips and earnings and saves them. The pots are shown moving one at a time. */
+  private settle(): void {
+    const eng = this.eng!;
+    const outcome = eng.finish();
+    this.outcome = outcome;
+    this.syncChips();
+    for (const [id, net] of Object.entries(outcome.net)) {
+      const p = this.players.get(id);
+      if (p) p.earnings += net;
+    }
+    for (const p of this.players.values()) this.store.set(p.name, p.chips, p.debt, p.earnings);
+    this.store.save();
+    this.result = {
+      hand: this.handNo,
+      showdown: outcome.showdown,
+      pots: outcome.pots.map((pot) => ({
+        amount: pot.amount,
+        winners: [...pot.winners],
+        handName: pot.handName,
+        cards: pot.cards.map((c) => ({ ...c })),
+      })),
+      players: eng.players.map((hp) => ({
+        playerId: hp.id,
+        name: this.players.get(hp.id)?.name ?? '',
+        net: outcome.net[hp.id] ?? 0,
+      })),
+    };
+    this.send({ type: 'hand_result', ...this.result });
+  }
+
+  private awardNextPot(): void {
+    const result = this.result!;
+    if (this.potsAwarded >= result.pots.length) {
+      this.phase = 'hand_over';
+      this.broadcast();
+      this.setFlow(() => this.nextHand(), this.timing.showdownMs);
       return;
     }
-    this.turn = next.id;
-    next.activeHand = next.hands.findIndex((hd) => hd.status === 'playing');
-    if (next.leaving) return this.autoStand(next, 'left the table');
-    this.armTurnTimer(next);
+    const i = this.potsAwarded;
+    const pot = result.pots[i]!;
+    const names = pot.winners.map((id) => this.players.get(id)?.name ?? 'A player');
+    const which = result.pots.length === 1 ? '' : i === 0 ? ' the main pot' : ` side pot ${i}`;
+    const how = pot.handName ? ` with ${inSentence(pot.handName)}` : '';
+    const who = names.length === 1 ? `${names[0]} wins` : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} split`;
+    this.addLog(`${who}${which} ${n(pot.amount)}${how}`);
+    this.potsAwarded++;
     this.broadcast();
+    this.setFlow(() => this.awardNextPot(), this.timing.potMs);
   }
+
+  private nextHand(): void {
+    this.clearFlow();
+    for (const p of [...this.players.values()]) {
+      if (p.leaving) this.removePlayer(p);
+    }
+    if (!this.gameOpen) return; // the last player left, so the game ended
+    this.clearHand();
+    this.phase = 'waiting';
+    this.turn = null;
+    this.deadline = null;
+    this.maybeStartHand();
+    if (this.phase === 'waiting') this.broadcast(); // no new hand yet: show "Waiting for players"
+  }
+
+  // -------------------------------------------------------------- actions
 
   /** Starts (or restarts) the timer for the current player's turn. */
   private armTurnTimer(p: Player): void {
@@ -774,177 +860,45 @@ export class Table {
       return;
     }
     this.deadline = Date.now() + ms;
-    this.setFlow(() => this.autoStand(p, p.conn === null ? 'is away' : 'ran out of time'), ms);
+    this.setFlow(() => this.autoAct(p), ms);
   }
 
-  private autoStand(p: Player, reason: string): void {
-    const hand = p.hands[p.activeHand];
-    if (this.turn !== p.id || !hand || hand.status !== 'playing') return;
-    hand.status = 'stood';
-    this.addLog(`${this.who(p)} ${reason} and stands on ${handValue(hand.cards).total}`);
-    this.advanceTurn();
+  /** Checks for a player who ran out of time, or folds when there is a bet to call. */
+  private autoAct(p: Player): void {
+    const eng = this.eng;
+    if (!eng || this.turn !== p.id) return;
+    const legal = eng.legal(p.id);
+    if (!legal) return;
+    const reason = p.conn === null ? 'is away' : 'ran out of time';
+    const r = eng.act(p.id, { action: legal.canCheck ? 'check' : 'fold' });
+    if (!r.ok) return;
+    this.addLog(`${p.name} ${reason} and ${r.text}`);
+    this.logUncalled(r.uncalled);
+    this.afterChange();
   }
 
-  /** The player's name, plus which hand when they have split. */
-  private who(p: Player): string {
-    return p.hands.length > 1 ? `${p.name} (hand ${p.activeHand + 1})` : p.name;
-  }
-
-  private onAction(conn: Connection, p: Player, action: unknown): void {
-    if (this.phase !== 'player_turns') {
-      return this.sendError(conn, 'wrong_phase', 'Actions are only allowed during player turns');
+  private onAction(conn: Connection, p: Player, action: unknown, amount: unknown): void {
+    if (!BETTING_PHASES.includes(this.phase) || !this.eng || this.eng.status !== 'betting') {
+      return this.sendError(conn, 'wrong_phase', 'There is no betting going on right now');
     }
     if (this.turn !== p.id) return this.sendError(conn, 'not_your_turn', 'It is not your turn');
-    if (action !== 'hit' && action !== 'stand' && action !== 'double' && action !== 'split') {
-      return this.sendError(conn, 'bad_message', 'Action must be hit, stand, double or split');
+    if (typeof action !== 'string' || !ACTIONS.includes(action as ActionKind)) {
+      return this.sendError(conn, 'bad_message', 'Action must be fold, check, call, bet, raise or all_in');
     }
-    this.act(conn, p, action);
+    if (amount !== undefined && typeof amount !== 'number') {
+      return this.sendError(conn, 'bad_amount', 'The amount must be a whole number');
+    }
+    const r = this.eng.act(p.id, { action: action as ActionKind, amount });
+    if (!r.ok) return this.sendError(conn, r.error, r.message);
+    this.addLog(`${p.name} ${r.text}`);
+    this.logUncalled(r.uncalled);
+    this.afterChange();
   }
 
-  private act(conn: Connection, p: Player, action: ActionName): void {
-    const hand = p.hands[p.activeHand];
-    if (!hand || hand.status !== 'playing') return this.sendError(conn, 'action_not_allowed', 'You have no hand to play');
-    const who = this.who(p);
-
-    if (action === 'stand') {
-      hand.status = 'stood';
-      this.addLog(`${who} stands on ${handValue(hand.cards).total}`);
-      return this.advanceTurn();
-    }
-
-    if (action === 'split') return this.split(conn, p, hand);
-
-    if (action === 'double') {
-      if (!canDouble(hand.cards, this.settings.doubleRule, p.chips, hand.bet, hand.fromSplit)) {
-        return this.sendError(conn, 'action_not_allowed', 'You can not double right now');
-      }
-      p.chips -= hand.bet;
-      hand.bet *= 2;
-      hand.doubled = true;
-      const card = this.drawCard();
-      hand.cards.push(card);
-      const { total } = handValue(hand.cards);
-      this.addLog(`${who} doubles: ${rankText(card)}, total ${total}`);
-      if (total > 21) {
-        hand.status = 'bust';
-        this.addLog(`${who} busts`);
-      } else {
-        hand.status = 'stood';
-      }
-      return this.advanceTurn();
-    }
-
-    // hit
-    const card = this.drawCard();
-    hand.cards.push(card);
-    const { total } = handValue(hand.cards);
-    this.addLog(`${who} hits: ${rankText(card)}, total ${total}`);
-    if (total > 21) {
-      hand.status = 'bust';
-      this.addLog(`${who} busts`);
-      return this.advanceTurn();
-    }
-    if (total === 21) {
-      hand.status = 'stood';
-      return this.advanceTurn();
-    }
-    this.armTurnTimer(p); // every decision gets a fresh timer
-    this.broadcast();
-  }
-
-  /** Splits a pair into two hands, each with a second card. Only one split per round, no re-splitting. */
-  private split(conn: Connection, p: Player, hand: Hand): void {
-    if (!canSplit(hand.cards, this.settings.splitAllowed, p.chips, hand.bet, p.hands.length > 1)) {
-      return this.sendError(conn, 'action_not_allowed', 'You can not split right now');
-    }
-    const [first, second] = hand.cards as [Card, Card];
-    p.chips -= hand.bet;
-    const right = newHand(hand.bet);
-    hand.cards = [first];
-    hand.fromSplit = true;
-    right.cards = [second];
-    right.fromSplit = true;
-    right.status = 'playing';
-    p.hands.push(right);
-    this.addLog(`${p.name} splits ${rankText(first)}s`);
-
-    // The left hand gets its card first, then the right hand.
-    for (const hd of p.hands) hd.cards.push(this.drawCard());
-    const acesSplit = first.rank === 'A';
-    p.hands.forEach((hd, i) => {
-      const { total } = handValue(hd.cards);
-      this.addLog(`${p.name} (hand ${i + 1}): ${hd.cards.map(rankText).join(' ')}, total ${total}`);
-      // Split aces get exactly one card each and stand. A 21 is a normal 21 and stands too.
-      if (acesSplit || total === 21) hd.status = 'stood';
-    });
-    this.advanceTurn(); // the left hand if it is still playing, else the right hand, else the next player
-  }
-
-  // ------------------------------------------------------------ dealer turn
-
-  private dealerTurn(): void {
-    this.phase = 'dealer_turn';
-    this.dealerRevealed = true;
-    const hole = this.dealerCards[1]!;
-    this.addLog(`Dealer reveals ${rankText(hole)}, total ${handValue(this.dealerCards).total}`);
-    this.broadcast();
-
-    // If every player busted or has blackjack, there is nothing left to beat.
-    const needsDraw = this.activePlayers().some((p) => p.hands.some((hd) => hd.status === 'stood'));
-    const step = () => {
-      if (needsDraw && dealerShouldHit(this.dealerCards, this.settings.dealerHitsSoft17)) {
-        const card = this.drawCard();
-        this.dealerCards.push(card);
-        this.addLog(`Dealer draws ${rankText(card)}, total ${handValue(this.dealerCards).total}`);
-        this.broadcast();
-        this.setFlow(step, this.timing.dealerStepMs);
-      } else {
-        const { total } = handValue(this.dealerCards);
-        this.addLog(total > 21 ? `Dealer busts with ${total}` : `Dealer stands on ${total}`);
-        this.settle();
-      }
-    };
-    this.setFlow(step, this.timing.dealerStepMs);
-  }
-
-  // ----------------------------------------------------------------- settle
-
-  private settle(): void {
-    this.clearFlow();
-    this.phase = 'settle';
-    this.turn = null;
-    this.deadline = null;
-    this.dealerRevealed = true;
-
-    const results: RoundResultEntry[] = [];
-    for (const p of this.activePlayers()) {
-      p.hands.forEach((hd, i) => {
-        if (hd.status === 'playing') hd.status = 'stood';
-        const r = settleHand(hd.cards, this.dealerCards, hd.bet, this.settings.blackjackPayout, hd.fromSplit);
-        // The bet was taken when it was placed, so the bet and the winnings come back together.
-        p.chips += hd.bet + r.delta;
-        p.earnings += r.delta;
-        hd.outcome = r.outcome;
-        hd.delta = r.delta;
-        results.push({ playerId: p.id, name: p.name, hand: i, outcome: r.outcome, delta: r.delta });
-        const name = p.hands.length > 1 ? `${p.name} (hand ${i + 1})` : p.name;
-        this.addLog(`${name} ${describeOutcome(r.outcome, r.delta)}`);
-      });
-    }
-    for (const p of this.players.values()) this.store.set(p.name, p.chips, p.debt, p.earnings);
-    this.store.save();
-
-    this.broadcast();
-    this.send({ type: 'round_result', round: this.round, results });
-    this.setFlow(() => this.nextRound(), this.timing.settleMs);
-  }
-
-  private nextRound(): void {
-    for (const p of [...this.players.values()]) {
-      if (p.leaving) this.removePlayer(p);
-    }
-    if (!this.gameOpen) return; // the last player left, so the game ended
-    this.beginBetting();
+  private logUncalled(uncalled: { id: string; amount: number } | null): void {
+    if (!uncalled) return;
+    const p = this.players.get(uncalled.id);
+    if (p) this.addLog(`${n(uncalled.amount)} uncalled goes back to ${p.name}`);
   }
 
   // ------------------------------------------------------------------- kick
@@ -988,82 +942,121 @@ export class Table {
     return { ...rest, passwordSet: password !== '' };
   }
 
-  private handView(p: Player, hd: Hand, index: number): HandView {
-    const { total, soft } = handValue(hd.cards);
-    const myTurn = this.phase === 'player_turns' && this.turn === p.id && index === p.activeHand && hd.status === 'playing';
-    return {
-      cards: hd.cards.map((c) => ({ ...c })),
-      bet: hd.bet,
-      total,
-      soft,
-      status: hd.status,
-      doubled: hd.doubled,
-      allIn: hd.allIn,
-      fromSplit: hd.fromSplit,
-      canDouble: myTurn && canDouble(hd.cards, this.settings.doubleRule, p.chips, hd.bet, hd.fromSplit),
-      outcome: hd.outcome,
-      delta: hd.delta,
-    };
+  /** How many of a player's hole cards have been dealt so far (they are dealt one at a time). */
+  private holeCount(index: number): number {
+    const eng = this.eng!;
+    const count = eng.players.length;
+    const pos = (index - eng.button - 1 + count) % count;
+    return (this.holeShown > pos ? 1 : 0) + (this.holeShown > count + pos ? 1 : 0);
   }
 
-  private playerView(p: Player): PlayerView {
-    const hand = p.hands[p.activeHand];
-    const myTurn = this.phase === 'player_turns' && this.turn === p.id && hand !== undefined && hand.status === 'playing';
+  /** Chips a player has won but which are still in a pot on screen. */
+  private unawarded(id: string): number {
+    if (!this.outcome) return 0;
+    let sum = 0;
+    this.outcome.pots.forEach((pot, i) => {
+      if (i >= this.potsAwarded) sum += pot.shares[id] ?? 0;
+    });
+    return sum;
+  }
+
+  private playerView(p: Player, viewerId: string | null): PlayerView {
+    const eng = this.eng;
+    const index = eng && this.phase !== 'waiting' ? eng.indexOf(p.id) : -1;
+    const hp = index >= 0 ? eng!.players[index]! : null;
+    let cards: CardView[] = [];
+    let handName: string | null = null;
+    if (hp) {
+      const count = this.holeCount(index);
+      const visible = p.id === viewerId || this.revealed.has(p.id);
+      cards = hp.hole.slice(0, count).map((c) => (visible ? { ...c } : { hidden: true }));
+      // Hole cards are never sent to anyone else until they are shown.
+      if (this.revealed.has(p.id)) handName = bestHand([...hp.hole, ...eng!.board]).name;
+    }
     return {
       id: p.id,
       name: p.name,
-      chips: p.chips,
+      chips: p.chips - this.unawarded(p.id),
       ready: p.ready,
       connected: p.conn !== null,
       debt: p.debt,
       earnings: p.earnings,
       seat: p.seat,
-      hands: p.hands.map((hd, i) => this.handView(p, hd, i)),
-      activeHand: p.activeHand,
-      canSplit: myTurn && canSplit(hand.cards, this.settings.splitAllowed, p.chips, hand.bet, p.hands.length > 1),
+      sittingOut: p.sittingOut,
+      inHand: hp !== null,
+      folded: hp?.folded ?? false,
+      allIn: hp?.allIn ?? false,
+      bet: hp?.committed ?? 0,
+      lastAction: hp?.lastAction ?? null,
+      cards,
+      handName,
     };
   }
 
-  private dealerView(): DealerView {
-    // The hole card is never sent until it is revealed.
-    const cards: CardView[] = this.dealerCards.map((c, i) =>
-      i === 1 && !this.dealerRevealed ? { hidden: true } : { ...c },
-    );
-    const visible = this.dealerCards.filter((_, i) => i !== 1 || this.dealerRevealed);
-    const { total, soft } = handValue(visible);
+  private youView(viewerId: string | null): YouView | null {
+    const eng = this.eng;
+    if (!eng || !viewerId || this.phase === 'waiting') return null;
+    const index = eng.indexOf(viewerId);
+    if (index < 0) return null;
+    const hp = eng.players[index]!;
+    const cards = hp.hole.slice(0, this.holeCount(index)).map((c) => ({ ...c }));
+    const legal = this.turn === viewerId ? eng.legal(viewerId) : null;
     return {
       cards,
-      total,
-      soft,
-      blackjack: this.dealerRevealed && isBlackjack(this.dealerCards),
+      handName: cards.length === 2 ? bestHand([...cards, ...eng.board]).name : null,
+      legal: legal ? { ...legal, allInTo: hp.committed + hp.stack } : null,
     };
   }
 
-  snapshot(): TableState {
+  private potsView(): PotView[] {
+    if (!this.eng || this.phase === 'waiting') return [];
+    if (this.outcome) {
+      return this.outcome.pots.slice(this.potsAwarded).map((pot) => ({ amount: pot.amount, eligible: [...pot.winners] }));
+    }
+    return this.eng.pots();
+  }
+
+  /** The table as one player sees it: only their own hole cards are face up. */
+  snapshot(viewerId: string | null = null): TableState {
+    const eng = this.eng && this.phase !== 'waiting' ? this.eng : null;
+    const seatOf = (i: number | undefined) => (eng && i !== undefined ? (this.handSeats[i] ?? null) : null);
     return {
       type: 'table_state',
       phase: this.phase,
       started: this.started,
       settings: this.publicSettings(),
       hostId: this.hostId,
-      players: [...this.players.values()].map((p) => this.playerView(p)),
+      players: [...this.players.values()].map((p) => this.playerView(p, viewerId)),
       seats: [...this.seats],
-      dealer: this.dealerView(),
+      hand: this.handNo,
+      buttonSeat: eng ? this.buttonSeat : null,
+      smallBlindSeat: seatOf(eng?.sbIndex),
+      bigBlindSeat: seatOf(eng?.bbIndex),
+      board: eng ? eng.board.map((c) => ({ ...c })) : [],
+      pots: this.potsView(),
       turn: this.turn,
       deadline: this.deadline,
       serverNow: Date.now(),
-      round: this.round,
-      shuffles: this.shuffles,
       log: this.logEntries.map((e) => ({ ...e })),
+      you: this.youView(viewerId),
+      result: this.result,
+      potsAwarded: this.potsAwarded,
     };
   }
 
+  /** Sends every joined connection its own view of the table. */
   private broadcast(): void {
     if (this.closed) return;
-    this.send(this.snapshot());
+    for (const [conn, id] of this.bound) {
+      try {
+        conn.send(this.snapshot(id));
+      } catch (err) {
+        this.logger(`Could not send to a client: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
-  /** Sends to every connection that has joined. */
+  /** Sends the same message to every connection that has joined. */
   private send(msg: ServerMsg): void {
     for (const conn of this.bound.keys()) {
       try {
@@ -1094,7 +1087,7 @@ export class Table {
     return id ? this.players.get(id) : undefined;
   }
 
-  /** The round flow has at most one pending timer; setting a new one replaces the old. */
+  /** The hand flow has at most one pending timer; setting a new one replaces the old. */
   private setFlow(fn: () => void, ms: number): void {
     this.clearFlow();
     if (this.closed) return;
@@ -1103,7 +1096,7 @@ export class Table {
       try {
         fn();
       } catch (err) {
-        this.logger(`Error in round flow: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+        this.logger(`Error in hand flow: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
       }
     }, ms);
   }
@@ -1111,18 +1104,5 @@ export class Table {
   private clearFlow(): void {
     if (this.flow) clearTimeout(this.flow);
     this.flow = null;
-  }
-}
-
-function describeOutcome(outcome: Outcome, delta: number): string {
-  switch (outcome) {
-    case 'blackjack':
-      return `wins with blackjack +${delta}`;
-    case 'win':
-      return `wins +${delta}`;
-    case 'push':
-      return 'pushes';
-    case 'loss':
-      return `loses ${Math.abs(delta)}`;
   }
 }

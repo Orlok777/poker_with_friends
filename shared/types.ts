@@ -11,7 +11,7 @@ export interface Card {
   suit: Suit;
 }
 
-/** A card as sent to clients. The dealer's hole card is `{ hidden: true }` until revealed. */
+/** A card as sent to clients. Another player's hole card is `{ hidden: true }` until it is shown. */
 export type CardView = Card | { hidden: true };
 
 export function isHiddenCard(card: CardView): card is { hidden: true } {
@@ -21,26 +21,24 @@ export function isHiddenCard(card: CardView): card is { hidden: true } {
 export const RANKS: Rank[] = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 export const SUITS: Suit[] = ['S', 'H', 'D', 'C'];
 
-// ------------------------------------------------------------- settings
+const SUIT_SYMBOL: Record<Suit, string> = { S: '♠', H: '♥', D: '♦', C: '♣' };
 
-export type BlackjackPayout = '3:2' | '6:5';
-export type DoubleRule = 'any' | '9-11' | 'off';
+/** "K♠", as used in the log. */
+export function cardText(card: Card): string {
+  return `${card.rank}${SUIT_SYMBOL[card.suit]}`;
+}
+
+// ------------------------------------------------------------- settings
 
 export interface Settings {
   maxPlayers: number;
   /** Empty string means no password. Never sent to clients. */
   password: string;
   startingChips: number;
-  minBet: number;
-  bettingSeconds: number;
+  smallBlind: number;
+  bigBlind: number;
   /** null turns the turn timer off. */
   turnSeconds: number | null;
-  decks: number;
-  dealerHitsSoft17: boolean;
-  blackjackPayout: BlackjackPayout;
-  doubleRule: DoubleRule;
-  /** Whether a pair may be split into two hands. */
-  splitAllowed: boolean;
 }
 
 /** Settings as sent to clients: the password itself is replaced by a flag. */
@@ -50,26 +48,24 @@ export const DEFAULT_SETTINGS: Settings = {
   maxPlayers: 6,
   password: '',
   startingChips: 1000,
-  minBet: 10,
-  bettingSeconds: 20,
+  smallBlind: 5,
+  bigBlind: 10,
   turnSeconds: 30,
-  decks: 5,
-  dealerHitsSoft17: false,
-  blackjackPayout: '3:2',
-  doubleRule: 'any',
-  splitAllowed: true,
 };
 
 export const SETTINGS_LIMITS = {
-  maxPlayers: { min: 1, max: 7 },
+  maxPlayers: { min: 2, max: 9 },
   startingChips: { min: 100, max: 100_000 },
-  bettingSeconds: { min: 10, max: 60 },
   turnSeconds: { min: 10, max: 120 },
-  decks: { min: 1, max: 8 },
 } as const;
 
 function isInt(n: unknown): n is number {
   return typeof n === 'number' && Number.isInteger(n);
+}
+
+/** The biggest big blind the starting chips allow. */
+export function maxBigBlind(startingChips: number): number {
+  return Math.floor(startingChips / 10);
 }
 
 /** Returns an error message, or null when the whole settings object is valid. */
@@ -82,25 +78,16 @@ export function validateSettings(s: Settings): string | null {
   if (!isInt(s.startingChips) || s.startingChips < L.startingChips.min || s.startingChips > L.startingChips.max) {
     return `Starting chips must be ${L.startingChips.min} to ${L.startingChips.max}`;
   }
-  if (!isInt(s.minBet) || s.minBet < 1) return 'Minimum bet must be at least 1';
-  if (s.minBet > s.startingChips) return 'Minimum bet can not be more than the starting chips';
-  if (!isInt(s.bettingSeconds) || s.bettingSeconds < L.bettingSeconds.min || s.bettingSeconds > L.bettingSeconds.max) {
-    return `Betting timer must be ${L.bettingSeconds.min} to ${L.bettingSeconds.max} seconds`;
+  if (!isInt(s.smallBlind) || s.smallBlind < 1) return 'The small blind must be at least 1';
+  if (!isInt(s.bigBlind) || s.bigBlind < s.smallBlind) return 'The big blind can not be smaller than the small blind';
+  if (s.bigBlind > maxBigBlind(s.startingChips)) {
+    return `The big blind can be at most a tenth of the starting chips (${maxBigBlind(s.startingChips)})`;
   }
   if (s.turnSeconds !== null) {
     if (!isInt(s.turnSeconds) || s.turnSeconds < L.turnSeconds.min || s.turnSeconds > L.turnSeconds.max) {
       return `Turn timer must be ${L.turnSeconds.min} to ${L.turnSeconds.max} seconds, or off`;
     }
   }
-  if (!isInt(s.decks) || s.decks < L.decks.min || s.decks > L.decks.max) {
-    return `Decks must be ${L.decks.min} to ${L.decks.max}`;
-  }
-  if (typeof s.dealerHitsSoft17 !== 'boolean') return 'Dealer on soft 17 must be stand or hit';
-  if (s.blackjackPayout !== '3:2' && s.blackjackPayout !== '6:5') return 'Blackjack payout must be 3:2 or 6:5';
-  if (s.doubleRule !== 'any' && s.doubleRule !== '9-11' && s.doubleRule !== 'off') {
-    return 'Double down must be any, 9-11 or off';
-  }
-  if (typeof s.splitAllowed !== 'boolean') return 'Split must be on or off';
   return null;
 }
 
@@ -110,41 +97,14 @@ export const USERNAME_PATTERN = /^[A-Za-z0-9 _-]{1,16}$/;
 
 // ------------------------------------------------------------ table state
 
-export type Phase = 'waiting' | 'betting' | 'dealing' | 'player_turns' | 'dealer_turn' | 'settle';
+export type Phase = 'waiting' | 'preflop' | 'flop' | 'turn' | 'river' | 'showdown' | 'hand_over';
 
-/** What happened to a hand once it has been settled. */
-export type Outcome = 'win' | 'loss' | 'push' | 'blackjack';
-
-export type HandStatus =
-  | 'none' // no hand this round (sitting out, watching, or between rounds)
-  | 'playing' // has cards, still to act or being acted on
-  | 'stood'
-  | 'bust'
-  | 'blackjack';
-
-/** One hand of a player. A player has one hand, or two after a split. */
-export interface HandView {
-  cards: Card[];
-  bet: number;
-  total: number;
-  soft: boolean;
-  status: HandStatus;
-  doubled: boolean;
-  /** True when the bet was the player's whole stack. */
-  allIn: boolean;
-  /** True for the two hands made by a split. A 21 on such a hand is not a blackjack. */
-  fromSplit: boolean;
-  /** True only for the hand being played right now, when the double rule and the chips allow it. */
-  canDouble: boolean;
-  /** Set once the round is settled; cleared when the next round starts. */
-  outcome: Outcome | null;
-  /** Net chip change for this hand, set together with `outcome`. */
-  delta: number | null;
-}
+export type ActionKind = 'fold' | 'check' | 'call' | 'bet' | 'raise' | 'all_in';
 
 export interface PlayerView {
   id: string;
   name: string;
+  /** Chips behind, not counting chips in front of the player this round. */
   chips: number;
   ready: boolean;
   connected: boolean;
@@ -154,21 +114,70 @@ export interface PlayerView {
   earnings: number;
   /** Seat index, or null when watching or waiting for a seat. */
   seat: number | null;
-  /** Empty when the player has no hand (sitting out, watching, or between rounds). Two after a split. */
-  hands: HandView[];
-  /** Index into `hands` of the hand being played; 0 when it is nobody's turn. */
-  activeHand: number;
-  /** True only on this player's turn, when splitting is allowed right now. */
-  canSplit: boolean;
+  /** Chose to sit out. Takes effect from the next hand. */
+  sittingOut: boolean;
+  /** Dealt into the current hand (also after folding). */
+  inHand: boolean;
+  folded: boolean;
+  allIn: boolean;
+  /** Chips in front of the player in this betting round. */
+  bet: number;
+  /** "Check", "Call 20", "Raise to 60", "All in", "Fold", or null. */
+  lastAction: string | null;
+  /** Face up for yourself and for hands that were shown, `{ hidden: true }` otherwise. Empty when not in the hand. */
+  cards: CardView[];
+  /** The hand's name, only once the cards are shown. */
+  handName: string | null;
 }
 
-export interface DealerView {
-  /** The hole card is `{ hidden: true }` until it is revealed. */
-  cards: CardView[];
-  /** Total of the revealed cards only. */
-  total: number;
-  soft: boolean;
-  blackjack: boolean;
+export interface LegalView {
+  canCheck: boolean;
+  /** Chips needed to call (capped at the stack); 0 when checking is possible. */
+  callAmount: number;
+  canBet: boolean;
+  canRaise: boolean;
+  /** Smallest and largest "to" amount for a bet or raise. */
+  minTo: number;
+  maxTo: number;
+  canAllIn: boolean;
+  /** The "to" amount of going all in: chips in front plus chips behind. */
+  allInTo: number;
+}
+
+/** Only for the player receiving the state. */
+export interface YouView {
+  cards: Card[];
+  /** Your best hand with the board so far, e.g. "Pair of sevens". */
+  handName: string | null;
+  /** What you may do right now; null when it is not your turn. */
+  legal: LegalView | null;
+}
+
+export interface PotView {
+  amount: number;
+  eligible: string[];
+}
+
+export interface PotResultView {
+  amount: number;
+  winners: string[];
+  /** Null when everyone else folded. */
+  handName: string | null;
+  /** The five cards of the winning hand; empty after a fold win. */
+  cards: Card[];
+}
+
+export interface NetResult {
+  playerId: string;
+  name: string;
+  net: number;
+}
+
+export interface HandResult {
+  hand: number;
+  showdown: boolean;
+  pots: PotResultView[];
+  players: NetResult[];
 }
 
 export interface LogEntry {
@@ -186,22 +195,30 @@ export interface TableState {
   players: PlayerView[];
   /** seats[i] is the player id sitting in seat i, or null. */
   seats: (string | null)[];
-  dealer: DealerView;
+  /** Hand number, counting from 1. 0 before the first hand. */
+  hand: number;
+  buttonSeat: number | null;
+  smallBlindSeat: number | null;
+  bigBlindSeat: number | null;
+  board: Card[];
+  /** Main pot first. Chips in front of the players this round are not in here yet. */
+  pots: PotView[];
   /** Id of the player whose turn it is, or null. */
   turn: string | null;
   /** Epoch ms when the current timer ends, or null when no timer runs. */
   deadline: number | null;
   /** Server clock when this state was sent, so clients can correct for clock differences. */
   serverNow: number;
-  round: number;
-  /** Goes up by one every time the shoe is reshuffled (not for the first shuffle). */
-  shuffles: number;
   log: LogEntry[];
+  /** For the receiving player only. Null when they are not in the hand. */
+  you: YouView | null;
+  /** The result of the hand once it has been decided, until the next hand starts. */
+  result: HandResult | null;
+  /** How many of `result.pots` have been pushed to their winners so far. */
+  potsAwarded: number;
 }
 
 // ---------------------------------------------------------------- messages
-
-export type ActionName = 'hit' | 'stand' | 'double' | 'split';
 
 export type ClientMsg =
   | { type: 'join'; username: string; password?: string; reconnectToken?: string; hostToken?: string }
@@ -209,8 +226,8 @@ export type ClientMsg =
   | { type: 'set_ready'; ready: boolean }
   | { type: 'update_settings'; settings: Partial<Settings> }
   | { type: 'start_game' }
-  | { type: 'place_bet'; amount: number }
-  | { type: 'action'; action: ActionName }
+  | { type: 'action'; action: ActionKind; amount?: number }
+  | { type: 'sit_out'; sittingOut: boolean }
   | { type: 'reset_chips' }
   | { type: 'borrow' }
   | { type: 'pay_back' }
@@ -232,28 +249,17 @@ export type ErrorCode =
   | 'invalid_settings'
   | 'cannot_start'
   | 'not_seated'
-  | 'bet_invalid'
-  | 'already_bet'
-  | 'insufficient_chips'
   | 'action_not_allowed'
+  | 'bad_amount'
   | 'unknown_player'
   | 'cannot_reset'
   | 'cannot_borrow'
   | 'cannot_pay_back';
 
-export interface RoundResultEntry {
-  playerId: string;
-  name: string;
-  /** Which of the player's hands this result is for (0 unless they split). */
-  hand: number;
-  outcome: Outcome;
-  delta: number;
-}
-
 export type ServerMsg =
   | { type: 'server_info'; passwordRequired: boolean; seatsFree: boolean; phase: Phase; gameOpen: boolean }
   | { type: 'joined'; playerId: string; reconnectToken: string; isHost: boolean }
   | TableState
-  | { type: 'round_result'; round: number; results: RoundResultEntry[] }
+  | ({ type: 'hand_result' } & HandResult)
   | { type: 'kicked'; reason: string }
   | { type: 'error'; code: ErrorCode; message: string };
