@@ -1,12 +1,13 @@
-// Cards, hands, chips, result pills and countdown rings, plus their animations.
+// Cards, chips and countdown rings, plus their animations.
 
-import { isHiddenCard, type CardView, type HandView } from '../shared/types.js';
+import { isHiddenCard, type Card, type CardView } from '../shared/types.js';
 import { $, fmt, h, prefersReducedMotion } from './dom.js';
-import { playFlip } from './sound.js';
 
 const SUIT_CHAR = { S: '♠', H: '♥', D: '♦', C: '♣' } as const;
 const SUIT_NAME = { S: 'spades', H: 'hearts', D: 'diamonds', C: 'clubs' } as const;
 const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+
+export const cardKey = (c: Card): string => `${c.rank}${c.suit}`;
 
 // ------------------------------------------------------------------- cards
 
@@ -18,6 +19,7 @@ export function cardEl(card: CardView): HTMLElement {
   }
   const red = card.suit === 'H' || card.suit === 'D';
   const el = h('div', red ? 'card red' : 'card');
+  el.dataset.card = cardKey(card);
   const suit = SUIT_CHAR[card.suit];
   const corner = (cls: string) => {
     const c = h('span', cls);
@@ -29,59 +31,55 @@ export function cardEl(card: CardView): HTMLElement {
   return el;
 }
 
-/** How many cards of each hand were already on screen, so only new cards slide in. */
-const shownCount = new Map<string, number>();
-/** Whether the dealer's hole card was face down at the last render, to flip it when revealed. */
-let holeWasHidden = false;
+/** Which cards of each hand were on screen at the last render, and whether each was face down. */
+const shown = new Map<string, boolean[]>();
 const toDeal: HTMLElement[] = [];
 const toFlip: HTMLElement[] = [];
 
-/** Tells the animations that `n` cards of this hand are already on screen, e.g. the first card of a split hand. */
-export function setShownCards(key: string, n: number): void {
-  shownCount.set(key, n);
-}
-
-/** Forgets what was on screen, e.g. after leaving the table. */
+/** Forgets what was on screen, e.g. when a new hand starts or after leaving the table. */
 export function resetCardMemory(): void {
-  shownCount.clear();
-  holeWasHidden = false;
+  shown.clear();
 }
 
-/** Cards in a row, overlapping. New cards are queued to slide in from the shoe. Returns the hand and how many cards are new. */
-export function handEl(key: string, cards: CardView[], animate: boolean): { el: HTMLElement; added: number } {
-  const hand = h('div', 'hand');
-  const prev = shownCount.get(key) ?? 0;
+/**
+ * Cards in a row. New cards are queued to slide in from the deck, and cards that were face down
+ * and are now face up are queued to flip. Returns the row and how many cards are new and flipped.
+ */
+export function handEl(key: string, cards: CardView[], animate: boolean): { el: HTMLElement; added: number; flipped: number } {
+  const row = h('div', 'hand');
+  const before = shown.get(key) ?? [];
   let added = 0;
+  let flipped = 0;
   cards.forEach((card, i) => {
     const el = cardEl(card);
-    if (animate && i >= prev) {
+    if (animate && i >= before.length) {
       toDeal.push(el);
       added++;
-    } else if (animate && key === 'dealer' && i === 1 && holeWasHidden && !isHiddenCard(card)) {
+    } else if (animate && before[i] === true && !isHiddenCard(card)) {
       toFlip.push(el);
+      flipped++;
     }
-    hand.append(el);
+    row.append(el);
   });
-  shownCount.set(key, cards.length);
-  if (key === 'dealer') holeWasHidden = cards.length > 1 && isHiddenCard(cards[1]!);
-  return { el: hand, added };
+  shown.set(key, cards.map((c) => isHiddenCard(c)));
+  return { el: row, added, flipped };
 }
 
-/** Runs the queued deal and flip animations. Call after the new hands are in the page. */
+/** Runs the queued deal and flip animations. Call after the new cards are in the page. */
 export function runCardAnimations(): void {
   const deal = toDeal.splice(0);
   const flip = toFlip.splice(0);
-  if (flip.length > 0) playFlip();
   if (prefersReducedMotion()) {
     for (const el of [...deal, ...flip]) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150 });
     return;
   }
-  const shoe = $('shoe').getBoundingClientRect();
+  const deck = $('deck').getBoundingClientRect();
   deal.forEach((el, i) => {
     const r = el.getBoundingClientRect();
-    const dx = shoe.left + shoe.width / 2 - (r.left + r.width / 2);
-    const dy = shoe.top + shoe.height / 2 - (r.top + r.height / 2);
-    const scale = Math.min(1, 46 / Math.max(1, r.width));
+    if (r.width === 0) return;
+    const dx = deck.left + deck.width / 2 - (r.left + r.width / 2);
+    const dy = deck.top + deck.height / 2 - (r.top + r.height / 2);
+    const scale = Math.min(1, 40 / Math.max(1, r.width));
     el.animate(
       [
         { transform: `translate(${dx}px, ${dy}px) rotate(-12deg) scale(${scale})`, opacity: 0.4 },
@@ -101,18 +99,6 @@ export function runCardAnimations(): void {
   }
 }
 
-// ------------------------------------------------------------------ totals
-
-/** "7/17" for a soft hand still in play, otherwise the best total. */
-export function totalLabel(total: number, soft: boolean, final: boolean): string {
-  if (soft && total < 21 && !final) return `${total - 10}/${total}`;
-  return String(total);
-}
-
-export function totalBadge(text: string, kind: '' | 'bust' | 'bj' = ''): HTMLElement {
-  return h('span', kind ? `total-badge ${kind}` : 'total-badge', text);
-}
-
 // ------------------------------------------------------------------- chips
 
 export function chipColor(amount: number): string {
@@ -122,33 +108,19 @@ export function chipColor(amount: number): string {
   return 'c10';
 }
 
-/** A chip disc with the amount next to it. */
-export function betChip(amount: number, opts: { doubled?: boolean; pending?: boolean; allIn?: boolean } = {}): HTMLElement {
-  const box = h('span', opts.pending ? 'bet-chip pending' : 'bet-chip');
-  box.append(h('span', `chip-disc ${chipColor(amount)}`), h('span', 'bet-amount num', fmt(amount)));
-  if (opts.doubled) box.append(h('span', 'bet-x', '×2'));
-  if (opts.allIn) box.append(h('span', 'bet-allin', 'ALL IN'));
+/** A small stack of chip discs with the amount next to it. Bigger amounts get a taller stack. */
+export function chipStack(amount: number, label?: string): HTMLElement {
+  const box = h('span', 'chip-stack');
+  const discs = h('span', 'discs');
+  const count = amount >= 1000 ? 3 : amount >= 100 ? 2 : 1;
+  for (let i = 0; i < count; i++) discs.append(h('span', `chip-disc ${chipColor(amount)}`));
+  box.append(discs);
+  if (label) box.append(h('span', 'stack-label', label));
+  box.append(h('span', 'stack-amount num', fmt(amount)));
   return box;
 }
 
-/** WIN +100, BLACKJACK +150, PUSH, BUST −100 or LOSE −100. Null when the round is not settled. */
-export function resultPill(p: HandView): HTMLElement | null {
-  if (!p.outcome) return null;
-  const d = p.delta ?? 0;
-  const amount = fmt(Math.abs(d));
-  switch (p.outcome) {
-    case 'win':
-      return h('span', 'result win', `WIN +${amount}`);
-    case 'blackjack':
-      return h('span', 'result bj', `BLACKJACK +${amount}`);
-    case 'push':
-      return h('span', 'result push', 'PUSH');
-    case 'loss':
-      return h('span', 'result loss', p.status === 'bust' ? `BUST −${amount}` : `LOSE −${amount}`);
-  }
-}
-
-/** Slides an element in from another element's position, e.g. a chip from the bet panel to the felt. */
+/** Slides an element in from another element's position. */
 export function slideFrom(el: HTMLElement, from: Element | null): void {
   if (prefersReducedMotion() || !from) {
     el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200 });
@@ -164,6 +136,27 @@ export function slideFrom(el: HTMLElement, from: Element | null): void {
     ],
     { duration: 300, easing: EASE },
   );
+}
+
+/** A chip flies from one element to another and disappears: a pot pushed to its winner. */
+export function flyChips(from: Element | null, to: Element | null, amount: number): void {
+  if (!from || !to || prefersReducedMotion()) return;
+  const a = from.getBoundingClientRect();
+  const b = to.getBoundingClientRect();
+  if (a.width === 0 || b.width === 0) return;
+  const chip = h('span', `chip-disc flying ${chipColor(amount)}`);
+  chip.style.left = `${a.left + a.width / 2 - 13}px`;
+  chip.style.top = `${a.top + a.height / 2 - 13}px`;
+  document.body.append(chip);
+  const anim = chip.animate(
+    [
+      { transform: 'none', opacity: 1 },
+      { transform: `translate(${b.left + b.width / 2 - (a.left + a.width / 2)}px, ${b.top + b.height / 2 - (a.top + a.height / 2)}px)`, opacity: 0.9 },
+    ],
+    { duration: 520, easing: EASE },
+  );
+  anim.onfinish = () => chip.remove();
+  anim.oncancel = () => chip.remove();
 }
 
 // ------------------------------------------------------------------- rings
@@ -192,5 +185,10 @@ export function tickRings(remainingMs: number, totalMs: number): void {
     }
     ring.classList.toggle('urgent', secs <= 5);
     ring.setAttribute('aria-label', `${secs} seconds left`);
+  }
+  // The thin countdown bar under the current player's seat.
+  for (const bar of document.querySelectorAll<HTMLElement>('[data-timer-bar]')) {
+    bar.style.transform = `scaleX(${fraction})`;
+    bar.classList.toggle('urgent', secs <= 5);
   }
 }

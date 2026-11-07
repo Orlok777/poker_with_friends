@@ -5,24 +5,18 @@ import type { PlayerView, TableState } from '../shared/types.js';
 import { app, me, send } from './app.js';
 import { $, fmt } from './dom.js';
 import { playChip } from './sound.js';
-import { betOf } from './table.js';
 
-/** The round whose prompt the player closed with "Not now", so it does not pop up again that round. */
-let dismissedRound: number | null = null;
+/** The hand whose prompt the player closed with "Not now", so it does not pop up again for that hand. */
+let dismissedHand: number | null = null;
 /** Set when the player opens the prompt from the Borrow button, even after dismissing it. */
 let forced = false;
 let busy = false;
 let returnFocus: Element | null = null;
 
-/** Out of chips and still able to place a bet this round (betting is open, seated, no bet yet). */
+/** Seated with no chips, and not in a hand that is still being played. */
 function isOut(s: TableState, self: PlayerView): boolean {
-  return (
-    s.phase === 'betting' &&
-    s.deadline !== null &&
-    self.seat !== null &&
-    betOf(self) === 0 &&
-    self.chips < s.settings.minBet
-  );
+  const live = self.inHand && s.phase !== 'hand_over' && s.phase !== 'waiting';
+  return s.started && self.seat !== null && self.chips === 0 && !live;
 }
 
 function isOpen(): boolean {
@@ -60,11 +54,11 @@ export function renderBorrow(s: TableState, self: PlayerView): void {
   busy = false; // a new state answers any request we were waiting on
   const out = isOut(s, self);
   if (!out) forced = false;
-  if (out && (forced || dismissedRound !== s.round)) open(s, self);
+  if (out && (forced || dismissedHand !== s.hand)) open(s, self);
   else close();
 }
 
-/** Opens the prompt again from the Borrow button in the betting bar. */
+/** Opens the prompt again from the Borrow chips button next to the seat. */
 export function openBorrowPrompt(): void {
   const s = app.state;
   const self = me();
@@ -75,7 +69,7 @@ export function openBorrowPrompt(): void {
 
 function dismiss(): void {
   const s = app.state;
-  dismissedRound = s ? s.round : null;
+  dismissedHand = s ? s.hand : null;
   forced = false;
   close();
 }

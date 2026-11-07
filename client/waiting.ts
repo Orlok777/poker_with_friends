@@ -23,60 +23,15 @@ const GROUPS: { title: string; fields: Field[] }[] = [
     ],
   },
   {
-    title: 'Bets',
+    title: 'Blinds',
     fields: [
-      { kind: 'int', key: 'minBet', label: 'Minimum bet', min: 1 },
+      { kind: 'int', key: 'smallBlind', label: 'Small blind', min: 1 },
+      { kind: 'int', key: 'bigBlind', label: 'Big blind', min: 1 },
     ],
   },
   {
     title: 'Timers',
-    fields: [
-      { kind: 'int', key: 'bettingSeconds', label: 'Betting time', unit: 's', ...SETTINGS_LIMITS.bettingSeconds },
-      { kind: 'turn', key: 'turnSeconds', label: 'Turn time' },
-    ],
-  },
-  {
-    title: 'Rules',
-    fields: [
-      { kind: 'int', key: 'decks', label: 'Decks in the shoe', ...SETTINGS_LIMITS.decks },
-      {
-        kind: 'segment',
-        key: 'dealerHitsSoft17',
-        label: 'Dealer on soft 17',
-        options: [
-          ['false', 'Stands'],
-          ['true', 'Hits'],
-        ],
-      },
-      {
-        kind: 'segment',
-        key: 'blackjackPayout',
-        label: 'Blackjack pays',
-        options: [
-          ['3:2', '3:2'],
-          ['6:5', '6:5'],
-        ],
-      },
-      {
-        kind: 'segment',
-        key: 'doubleRule',
-        label: 'Double down',
-        options: [
-          ['any', 'Any'],
-          ['9-11', '9–11'],
-          ['off', 'Off'],
-        ],
-      },
-      {
-        kind: 'segment',
-        key: 'splitAllowed',
-        label: 'Split allowed',
-        options: [
-          ['true', 'On'],
-          ['false', 'Off'],
-        ],
-      },
-    ],
+    fields: [{ kind: 'turn', key: 'turnSeconds', label: 'Turn time' }],
   },
 ];
 
@@ -150,9 +105,7 @@ function buildField(f: Field): HTMLElement {
   if (f.kind === 'segment') {
     label.removeAttribute('for');
     label.id = id;
-    const seg = segmented(f.label, f.options, (v) =>
-      sendSetting({ [f.key]: f.key === 'dealerHitsSoft17' || f.key === 'splitAllowed' ? v === 'true' : v } as Partial<Settings>),
-    );
+    const seg = segmented(f.label, f.options, (v) => sendSetting({ [f.key]: v } as Partial<Settings>));
     holder.append(seg.el);
     controls.push({ sync: (s, editable) => seg.set(String(s[f.key as keyof PublicSettings]), editable) });
   } else if (f.kind === 'password') {
@@ -279,7 +232,7 @@ async function shareLink(): Promise<void> {
 
 /** Copies the server's settings into the controls, leaving the one being typed in alone unless forced. */
 function syncSettings(s: TableState, force = false): void {
-  const editable = isHost() && !s.started && s.phase === 'waiting';
+  const editable = isHost() && !s.started;
   for (const c of controls) c.sync(s.settings, editable, force);
 }
 
@@ -334,8 +287,8 @@ export function renderWaiting(s: TableState, self: PlayerView): void {
   ready.setAttribute('aria-pressed', String(self.ready));
   ready.title = self.ready ? 'Click to mark yourself not ready' : '';
   $('start-row').hidden = !host;
-  const anyReady = s.players.some((p) => p.ready);
-  $<HTMLButtonElement>('start-btn').disabled = !anyReady;
-  $('start-hint').textContent = anyReady ? '' : 'At least one player must be ready.';
+  const enough = s.players.filter((p) => p.ready).length >= 2;
+  $<HTMLButtonElement>('start-btn').disabled = !enough;
+  $('start-hint').textContent = enough ? '' : 'At least two players must be ready.';
   syncSettings(s);
 }

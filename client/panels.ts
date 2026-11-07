@@ -64,13 +64,12 @@ function setRulesOpen(open: boolean): void {
 export function renderRules(s: TableState): void {
   const st = s.settings;
   const rows: [string, string][] = [
-    ['Blackjack pays', st.blackjackPayout === '3:2' ? '3 to 2' : '6 to 5'],
-    ['Dealer on soft 17', st.dealerHitsSoft17 ? 'Hits' : 'Stands'],
-    ['Double down', st.doubleRule === 'any' ? 'Any two cards' : st.doubleRule === '9-11' ? 'On 9, 10 or 11' : 'Not allowed'],
-    ['Split', st.splitAllowed ? 'Allowed, one split' : 'Not allowed'],
-    ['Minimum bet', fmt(st.minBet)],
-    ['Decks in the shoe', String(st.decks)],
-    ['Betting time', `${st.bettingSeconds} s`],
+    ['Game', "No-Limit Texas Hold'em"],
+    ['Blinds', `${fmt(st.smallBlind)} / ${fmt(st.bigBlind)}`],
+    ['Minimum bet', fmt(st.bigBlind)],
+    ['Antes', 'None'],
+    ['Starting chips', fmt(st.startingChips)],
+    ['Max players', String(st.maxPlayers)],
     ['Turn time', st.turnSeconds === null ? 'No limit' : `${st.turnSeconds} s`],
   ];
   $('rules-list').replaceChildren(

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0a0f0d" />
-    <title>Blackjack with Friends</title>
+    <title>Poker with Friends</title>
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e3a2b'/%3E%3Crect x='7' y='7' width='12' height='17' rx='2.5' fill='%23fbfbfa' transform='rotate(-10 13 15)'/%3E%3Crect x='13' y='8' width='12' height='17' rx='2.5' fill='%23f5b942' transform='rotate(8 19 16)'/%3E%3C/svg%3E"
@@ -22,7 +22,7 @@
         <div class="brand">
           <div class="brand-mark" aria-hidden="true"></div>
           <div>
-            <h1>Blackjack with Friends</h1>
+            <h1>Poker with Friends</h1>
             <p id="join-sub">Play for fake chips. Pick a name to sit down.</p>
           </div>
         </div>
@@ -44,7 +44,7 @@
       <header class="app-bar">
         <div class="brand brand-compact">
           <div class="brand-mark" aria-hidden="true"></div>
-          <span>Blackjack with Friends</span>
+          <span>Poker with Friends</span>
         </div>
         <div class="icon-row">
           <button class="icon-btn mute-btn" type="button" aria-label="Mute sound" title="Mute sound"></button>
@@ -111,11 +111,19 @@
 
       <main class="felt-wrap">
         <div id="felt" class="felt">
-          <div id="shoe" class="shoe" aria-hidden="true"><i></i><i></i><i></i></div>
-          <div id="dealer" class="dealer-spot"></div>
-          <div id="phase-pill" class="phase-pill" role="status" aria-live="polite"></div>
-          <p id="felt-rules" class="felt-rules"></p>
           <div id="others" class="others"></div>
+          <div id="center" class="center">
+            <p id="felt-rules" class="felt-rules"></p>
+            <div class="board-wrap">
+              <div id="board" class="board" aria-label="Board cards"></div>
+              <div id="deck" class="deck" aria-hidden="true"><i></i><i></i></div>
+            </div>
+            <div class="center-row">
+              <div id="pots" class="pots" aria-label="Pots"></div>
+              <div id="phase-pill" class="phase-pill" role="status" aria-live="polite"></div>
+            </div>
+            <p id="banner" class="banner" role="status" aria-live="polite" hidden></p>
+          </div>
           <div id="my-spot" class="my-spot"></div>
         </div>
       </main>
@@ -137,30 +145,26 @@
       <footer class="table-controls">
         <p id="watch-note" class="watch-note" hidden></p>
 
-        <div id="bet-bar" class="bet-panel" hidden>
-          <div class="bet-head">
-            <div class="bet-total">
-              <span class="bet-caption">Your bet <span id="bet-limits" class="bet-limits num"></span></span>
-              <strong id="pending-bet" class="bet-big num">0</strong>
-            </div>
-            <span id="bet-ring-slot" class="bet-ring-slot"></span>
-          </div>
-          <div id="chip-buttons" class="chip-row" role="group" aria-label="Add chips to your bet"></div>
-          <div class="bet-actions">
-            <button id="clear-bet" type="button" class="ghost bet-tool" title="Clear the bet"><span data-icon="close"></span><span>Clear</span></button>
-            <button id="half-bet" type="button" class="ghost bet-tool" title="Halve the bet"><span class="x2">½</span></button>
-            <button id="double-bet" type="button" class="ghost bet-tool" title="Double the bet"><span class="x2">×2</span></button>
-            <button id="allin-btn" type="button" class="ghost bet-tool allin-btn" title="Bet all your chips"><span id="allin-label">All in</span></button>
-            <button id="borrow-btn" type="button" class="primary bet-reset" hidden>Borrow chips</button>
-            <button id="confirm-bet" type="button" class="primary confirm-btn"><span data-icon="check"></span>Confirm<kbd>Enter</kbd></button>
-          </div>
-        </div>
-
         <div id="action-bar" class="action-bar" hidden>
-          <button id="hit-btn" type="button" class="action-btn act-hit"><span data-icon="hit"></span><span>Hit</span><kbd>H</kbd></button>
-          <button id="stand-btn" type="button" class="action-btn act-stand"><span data-icon="stand"></span><span>Stand</span><kbd>S</kbd></button>
-          <button id="double-btn" type="button" class="action-btn act-double"><span data-icon="double"></span><span>Double</span><kbd>D</kbd></button>
-          <button id="split-btn" type="button" class="action-btn act-split"><span data-icon="split"></span><span>Split</span><kbd>P</kbd></button>
+          <div class="sizing" role="group" aria-label="Bet or raise amount">
+            <label class="amount-field">
+              <span class="amount-caption">Amount</span>
+              <input id="amount-input" class="amount-input num" type="number" inputmode="numeric" step="1" />
+            </label>
+            <input id="amount-slider" class="amount-slider" type="range" aria-label="Bet or raise amount" />
+            <div class="presets">
+              <button type="button" class="ghost preset" data-preset="min">Min</button>
+              <button type="button" class="ghost preset" data-preset="0.5">½ pot</button>
+              <button type="button" class="ghost preset" data-preset="0.75">¾ pot</button>
+              <button type="button" class="ghost preset" data-preset="1">Pot</button>
+              <button id="allin-btn" type="button" class="ghost preset allin-btn" title="Put in all your chips"><span id="allin-label">All in</span></button>
+            </div>
+          </div>
+          <div class="act-row">
+            <button id="fold-btn" type="button" class="action-btn act-fold"><span data-icon="close"></span><span>Fold</span><kbd>F</kbd></button>
+            <button id="call-btn" type="button" class="action-btn act-call"><span data-icon="check"></span><span id="call-label">Check</span><kbd>C</kbd></button>
+            <button id="raise-btn" type="button" class="action-btn act-raise"><span data-icon="raise"></span><span id="raise-label">Raise to</span><kbd>R</kbd></button>
+          </div>
         </div>
       </footer>
     </section>
@@ -170,7 +174,7 @@
       <div class="panel narrow notice-panel">
         <span class="notice-icon" data-icon="disconnected"></span>
         <h2>Connection lost</h2>
-        <p id="lost-note">The server stopped or your connection dropped. Your chips are saved up to the last finished round.</p>
+        <p id="lost-note">The server stopped or your connection dropped. Your chips are saved up to the last finished hand.</p>
         <button id="retry-btn" type="button" class="primary big block">Retry</button>
       </div>
     </section>

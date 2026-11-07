@@ -1,11 +1,11 @@
 import type { ClientMsg, ServerMsg } from '../shared/types.js';
 import { app, me, send, toast } from './app.js';
 import { initBorrow, renderBorrow } from './borrow.js';
-import { clearBusy, getPendingBet, initControls, renderControls } from './controls.js';
+import { clearBusy, initControls, renderControls } from './controls.js';
 import { $, storageGet, storageSet } from './dom.js';
 import { hydrateIcons, icon } from './icons.js';
 import { initPanels, renderLog, renderRules, resetPanels } from './panels.js';
-import { isMuted, playLose, playPayout, playWin, setMuted, unlockAudio } from './sound.js';
+import { isMuted, playLose, playWin, setMuted, unlockAudio } from './sound.js';
 import { renderTable, resetTable } from './table.js';
 import { initWaiting, renderWaiting, resyncSettings } from './waiting.js';
 
@@ -17,7 +17,7 @@ interface Session {
   password: string;
 }
 
-const SESSION_KEY = 'bj.session';
+const SESSION_KEY = 'poker.session';
 
 function loadSession(): Session | null {
   try {
@@ -38,8 +38,8 @@ function saveSession(s: Session | null): void {
 /** The host link carries ?host=TOKEN. It is kept for this tab so a refresh stays host. */
 const hostToken: string | null = (() => {
   const fromUrl = new URLSearchParams(location.search).get('host');
-  if (fromUrl) storageSet('bj.host', fromUrl, sessionStorage);
-  return fromUrl ?? storageGet('bj.host', sessionStorage);
+  if (fromUrl) storageSet('poker.host', fromUrl, sessionStorage);
+  return fromUrl ?? storageGet('poker.host', sessionStorage);
 })();
 
 // -------------------------------------------------------------------- state
@@ -74,7 +74,7 @@ function connect(): void {
     app.joined = false;
     if (kicked) return; // the kicked screen is already showing
     $('lost-note').textContent =
-      lostNote ?? 'The server stopped or your connection dropped. Your chips are saved up to the last finished round.';
+      lostNote ?? 'The server stopped or your connection dropped. Your chips are saved up to the last finished hand.';
     showScreen('lost');
   };
   sock.onerror = () => {
@@ -139,15 +139,11 @@ function handle(msg: ServerMsg): void {
       render();
       return;
     }
-    case 'round_result': {
-      // With a split there are two results: the sound follows the net result.
-      const mine = msg.results.filter((r) => r.playerId === app.myId);
-      const net = mine.reduce((sum, r) => sum + r.delta, 0);
-      if (net > 0) {
-        playPayout();
-        playWin();
-      }
-      else if (net < 0) playLose();
+    case 'hand_result': {
+      // Jingles only for my own hands. The chips sound plays as each pot is pushed.
+      const mine = msg.players.find((r) => r.playerId === app.myId);
+      if (mine && mine.net > 0) playWin();
+      else if (mine && mine.net < 0) playLose();
       return;
     }
     case 'kicked': {
@@ -268,13 +264,13 @@ function render(): void {
   clearBusy();
   const self = me();
   if (!self) return;
-  if (s.phase === 'waiting') {
+  if (!s.started) {
     showScreen('waiting');
     renderWaiting(s, self);
   } else {
     showScreen('table');
-    renderControls(); // first, so a stale pending bet is cleared before the felt shows it
-    renderTable(s, self, getPendingBet());
+    renderControls();
+    renderTable(s, self);
     renderLog(s);
     renderRules(s);
   }

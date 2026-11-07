@@ -3,7 +3,7 @@
 //
 // The files are .mp3 because Safari on iPhone does not play .ogg before iOS 18.4.
 
-const MUTE_KEY = 'bj.muted';
+const MUTE_KEY = 'poker.muted';
 
 /** Master volume, 0 to 1. There is no volume slider; change this to make every sound quieter or louder. */
 const MASTER_VOLUME = 0.8;
@@ -117,32 +117,32 @@ function playFile(name: string, opts: { delay?: number; gain?: number } = {}): v
   src.start(c.currentTime + (opts.delay ?? 0));
 }
 
-/** A card dealt or drawn. */
+/** A hole card or board card dealt. */
 export function playDeal(): void {
   playFile(pick(FILES.deal));
 }
 
-/** The dealer's hole card turned face up. */
+/** Cards turned face up at showdown, or a hand folded. */
 export function playFlip(): void {
   playFile(pick(FILES.flip));
 }
 
-/** The shoe was reshuffled. */
+/** A new hand starts with a fresh shuffle. */
 export function playShuffle(): void {
   playFile(pick(FILES.shuffle));
 }
 
-/** A bet or chip placed. */
+/** A bet, call or raise. */
 export function playChip(): void {
   playFile(pick(FILES.chip));
 }
 
-/** Chips paid out on a win. */
+/** A pot pushed to its winner. */
 export function playPayout(): void {
   playFile(pick(FILES.payout));
 }
 
-/** An all-in bet: a quick cascade of chip sounds. */
+/** All in: a quick cascade of chip sounds. */
 export function playAllIn(): void {
   FILES.allIn.forEach((name, i) => playFile(name, { delay: i * 0.09, gain: 1 }));
 }
@@ -161,14 +161,34 @@ function tone(c: AudioContext, freq: number, start: number, duration: number, ty
   osc.stop(c.currentTime + start + duration + 0.02);
 }
 
-/** A short rising chime, played with the payout. Generated in code: the pack has no jingles. */
+/** A check: two short, soft knocks on the table. Generated in code: the pack has no knock. */
+export function playKnock(): void {
+  const c = audio();
+  if (!c || !master) return;
+  for (const start of [0, 0.11]) {
+    const osc = c.createOscillator();
+    const gain = c.createGain();
+    const t = c.currentTime + start;
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(190, t);
+    osc.frequency.exponentialRampToValueAtTime(70, t + 0.07);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.35, t + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    osc.connect(gain).connect(master);
+    osc.start(t);
+    osc.stop(t + 0.1);
+  }
+}
+
+/** A short rising chime, played when I win a hand. Generated in code: the pack has no jingles. */
 export function playWin(): void {
   const c = audio();
   if (!c) return;
   [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(c, f, 0.12 + i * 0.1, 0.22, 'triangle', 0.18));
 }
 
-/** A short falling tone for a lost round. Generated in code. */
+/** A short falling tone for a lost hand. Generated in code. */
 export function playLose(): void {
   const c = audio();
   if (!c) return;
