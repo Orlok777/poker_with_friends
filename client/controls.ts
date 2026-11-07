@@ -11,7 +11,7 @@ import { betOf, setBetSource, updatePendingBet } from './table.js';
 const CHIP_VALUES = [10, 25, 100, 500];
 
 let pendingBet = 0;
-/** The last bet this player confirmed: Repeat uses it, and each new round starts with it already in the bet box. */
+/** The last bet this player confirmed. Each new round starts with it already in the bet box. */
 let lastBet = 0;
 /** The round whose bet box was already filled with the last bet, so Clear is not undone by the next update. */
 let prefilledRound = -1;
@@ -163,7 +163,6 @@ export function initControls(): void {
   }
   $('bet-ring-slot').append(ringEl('bet-ring'));
   $('clear-bet').addEventListener('click', () => setPending(0));
-  $('repeat-bet').addEventListener('click', (ev) => setPending(lastBet, ev.currentTarget as Element));
   $('half-bet').addEventListener('click', (ev) => setPending(Math.floor(pendingBet / 2), ev.currentTarget as Element));
   $('double-bet').addEventListener('click', (ev) => setPending(pendingBet * 2, ev.currentTarget as Element));
   $('confirm-bet').addEventListener('click', confirmBet);
@@ -226,10 +225,6 @@ export function renderControls(): void {
     b.disabled = !canBet || busy || pendingBet >= cap;
   }
   $<HTMLButtonElement>('clear-bet').disabled = !canBet || busy || pendingBet === 0;
-  const repeatTo = Math.min(lastBet, cap);
-  const repeat = $<HTMLButtonElement>('repeat-bet');
-  repeat.disabled = !canBet || busy || repeatTo < s.settings.minBet || repeatTo === pendingBet;
-  $('repeat-amount').textContent = lastBet > 0 ? fmt(repeatTo) : '';
   $<HTMLButtonElement>('half-bet').disabled = !canBet || busy || pendingBet < 2;
   $<HTMLButtonElement>('double-bet').disabled = !canBet || busy || pendingBet === 0 || pendingBet >= cap;
   $<HTMLButtonElement>('confirm-bet').disabled = !canBet || busy || pendingBet < s.settings.minBet;

@@ -147,14 +147,6 @@
   font-weight: 800;
 }
 
-#repeat-amount:empty {
-  display: none;
-}
-
-#repeat-amount {
-  color: var(--text-muted);
-}
-
 .allin-btn.armed {
   color: var(--accent-ink);
   font-weight: 800;
@@ -313,10 +305,6 @@
   .allin-btn.armed {
     order: -1;
     flex: 1 0 100%;
-  }
-
-  .bet-tool .tool-label {
-    display: none;
   }
 
   /* Basis makes Confirm wrap onto its own row when the tool buttons leave too little room. */
