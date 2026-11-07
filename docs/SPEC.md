@@ -104,10 +104,12 @@ Use a token rather than "connections from localhost". Tunnel traffic also arrive
 
 Chips belong to a username, are saved on the host's PC, and survive server restarts. There are no passwords, which is fine among friends: anyone who types a username gets its chips.
 
-- **File:** `data/players.json` maps each username to its chip count, or to `{ "chips": n, "debt": n }` when the player owes the bank. Usernames match ignoring case, and the display keeps the case first used.
+- **File:** `data/players.json` maps each username to its chip count, or to `{ "chips": n, "debt": n, "earnings": n }` when the player owes the bank or has earnings other than 0 (zero fields are left out). Usernames match ignoring case, and the display keeps the case first used.
 - **New username:** starts with the starting-chips setting. A returning username keeps its saved chips, even if the host changed starting chips.
 - **Saving:** after each round is settled and when a player leaves. Write to a temporary file and then rename it, so a crash never leaves a half-written file.
 - **Reset chips:** a button that sets that player's chips back to the starting amount and clears their debt, after a confirmation. It is available in the waiting room and in the betting phase before the player bets.
+- **Earnings:** each player has their own running profit or loss from the cards, positive or negative, saved with their chips. It goes up and down with every settled hand (a doubled or split hand counts its full bet). Borrowing and paying back do not change it. It is shown as "Earnings +250" (green) or "Earnings −1,000" (red) under the player's name, and in the waiting room list. Everyone's money is their own: nobody can change another player's chips, debt or earnings. Reset chips sets earnings back to 0 (along with the chips and the debt).
+- **Pay back:** a player who owes can pay the debt down with their own chips, as much as the chips allow (the smaller of chips and debt), in the waiting room or in the betting phase before they bet. It lowers chips and debt by the same amount, so earnings stay the same, and logs `<name> pays back 1,000 and owes nothing`. It is a Pay back button in the waiting room and a Pay back link next to "owes" at the table. The server refuses it with `cannot_pay_back` when nothing is owed, there are no chips, or it is the wrong time.
 - **Out of chips:** a player whose chips are below the minimum bet cannot bet and sits out until they borrow. At the start of each betting phase they get an in-page prompt (not a browser dialog) offering to borrow a buy-in. "Borrow" adds the starting-chips amount to their chips and to their debt, and logs `<name> borrows 1,000 and now owes 1,000`. "Not now" (or Esc, or a click outside) closes the prompt for that round; a Borrow chips button in the betting bar opens it again. Chips are never negative: what the player owes is the debt, shown in red as "owes 1,000" next to their chips (at the table and in the waiting room). The debt is saved with the player, can grow with every loan, and is not paid back automatically. Borrowing is refused unless betting is open and the player is seated, has not bet and has fewer chips than the minimum bet (`cannot_borrow`).
 - **Same username twice:** a username already at the table can't join again, unless it's the same player reconnecting with their token.
 - **Allowed usernames:** 1 to 16 characters made of letters, numbers, spaces, `-` and `_`.
@@ -143,6 +145,7 @@ Every message is JSON with a `type` field, and the types are defined once in `/s
 | `action` | hit, stand, double or split | That player's turn |
 | `reset_chips` | none | Waiting room, or betting phase before that player bets |
 | `borrow` | none | Betting phase, seated, no bet yet, chips below the minimum bet |
+| `pay_back` | none | Waiting room, or betting phase before that player bets; the player owes and has chips |
 | `kick_player` | playerId | Host only |
 
 **Server to client**

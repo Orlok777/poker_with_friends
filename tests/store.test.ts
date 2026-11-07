@@ -34,24 +34,24 @@ describe('PlayerStore', () => {
     expect(existsSync(join(dir, 'players.json.tmp'))).toBe(false);
 
     const loaded = new PlayerStore(dir);
-    expect(loaded.get('aLeX')).toEqual({ name: 'Alex', chips: 1300, debt: 0 });
-    expect(loaded.get('BOB')).toEqual({ name: 'bob', chips: 50, debt: 0 });
+    expect(loaded.get('aLeX')).toEqual({ name: 'Alex', chips: 1300, debt: 0, earnings: 0 });
+    expect(loaded.get('BOB')).toEqual({ name: 'bob', chips: 50, debt: 0, earnings: 0 });
   });
 
   it('stores a debt next to the chips, and keeps it when only the chips are updated', () => {
     const dir = tempDir();
     const store = new PlayerStore(dir);
-    store.set('Alex', 1000, 1000);
+    store.set('Alex', 1000, 1000, -1000);
     store.set('Bob', 500);
-    store.set('Alex', 1400); // debt omitted: unchanged
+    store.set('Alex', 1400); // debt and earnings omitted: unchanged
     store.save();
     expect(JSON.parse(readFileSync(join(dir, 'players.json'), 'utf8'))).toEqual({
-      Alex: { chips: 1400, debt: 1000 },
+      Alex: { chips: 1400, debt: 1000, earnings: -1000 },
       Bob: 500,
     });
     const loaded = new PlayerStore(dir);
-    expect(loaded.get('alex')).toEqual({ name: 'Alex', chips: 1400, debt: 1000 });
-    loaded.set('Alex', 1400, 0);
+    expect(loaded.get('alex')).toEqual({ name: 'Alex', chips: 1400, debt: 1000, earnings: -1000 });
+    loaded.set('Alex', 1400, 0, 0);
     loaded.save();
     expect(JSON.parse(readFileSync(join(dir, 'players.json'), 'utf8')).Alex).toBe(1400);
   });

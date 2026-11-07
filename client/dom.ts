@@ -15,6 +15,9 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, t
 
 export const fmt = (n: number): string => n.toLocaleString('en-US');
 
+/** +1,250, −300 (with a real minus sign) or 0. */
+export const fmtSigned = (n: number): string => (n > 0 ? `+${fmt(n)}` : n < 0 ? `−${fmt(-n)}` : '0');
+
 export function storageGet(key: string, area: Storage = localStorage): string | null {
   try {
     return area.getItem(key);

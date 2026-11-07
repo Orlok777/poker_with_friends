@@ -482,7 +482,7 @@ describe('chips and usernames', () => {
     alex.autoPlay(100, standAlways);
     const won = await alex.waitForState((s) => s.phase === 'settle');
     expect(alex.me(won).chips).toBe(1100);
-    expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))).toEqual({ Alex: 1100 });
+    expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))).toEqual({ Alex: { chips: 1100, earnings: 100 } });
     expect(existsSync(join(first.dataDir, 'players.json.tmp'))).toBe(false);
 
     // Restart the server on the same folder, with different starting chips.
@@ -808,6 +808,7 @@ describe('borrowing', () => {
     const lost = await alex.waitForState((s) => s.phase === 'settle');
     expect(alex.me(lost).chips).toBe(0);
     expect(alex.me(lost).debt).toBe(0);
+    expect(alex.me(lost).earnings).toBe(-1000);
 
     // Not while results are showing, only while bets are being placed.
     expect((await alex.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
@@ -816,9 +817,10 @@ describe('borrowing', () => {
     alex.send({ type: 'borrow' });
     const borrowed = await alex.waitForState((s) => alex.me(s).debt === 1000);
     expect(alex.me(borrowed).chips).toBe(1000);
+    expect(alex.me(borrowed).earnings).toBe(-1000); // borrowing is not a win
     expect(borrowed.log.some((e) => e.text === 'Alex borrows 1,000 and now owes 1,000')).toBe(true);
     expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))).toEqual({
-      Alex: { chips: 1000, debt: 1000 },
+      Alex: { chips: 1000, debt: 1000, earnings: -1000 },
     });
 
     // Chips in hand again, so a second loan is refused.
@@ -831,10 +833,12 @@ describe('borrowing', () => {
     await back.join('Alex');
     expect(back.me().chips).toBe(1000);
     expect(back.me().debt).toBe(1000);
+    expect(back.me().earnings).toBe(-1000);
 
     // Resetting chips wipes the tab.
     back.send({ type: 'reset_chips' });
     await back.waitForState((s) => back.me(s).debt === 0);
+    expect(back.me().earnings).toBe(0);
     expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8')).Alex).toBe(1000);
   });
 });
@@ -899,5 +903,32 @@ describe('closing the game', () => {
     // The round finishes first, then the empty table closes and the waiting client is told.
     await waitUntil(() => late.all.some((m) => m.type === 'server_info' && !m.gameOpen), 5000, 'game closed info');
     expect(await late.join('Late')).toMatchObject({ type: 'error', code: 'game_closed' });
+  });
+});
+
+describe('paying back', () => {
+  it('pays borrowed chips back out of the chips without touching the earnings, and only before betting', async () => {
+    const rigged = cards('10 10 8 9'); // Alex 18 against 19
+    const { srv } = await h.boot({ rigged, timing: { settleMs: 150, bettingMs: 5000, turnMs: 5000 } });
+    const alex = await h.client(srv);
+    await alex.join('Alex', { hostToken: srv.hostToken });
+    expect((await alex.expectError({ type: 'pay_back' })).code).toBe('cannot_pay_back'); // owes nothing
+    alex.send({ type: 'set_ready', ready: true });
+    alex.send({ type: 'start_game' });
+    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
+    alex.send({ type: 'place_bet', amount: 1000 });
+    await alex.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
+    alex.send({ type: 'action', action: 'stand' });
+    await alex.waitForState((s) => s.phase === 'settle');
+    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
+    alex.send({ type: 'borrow' });
+    await alex.waitForState((s) => alex.me(s).debt === 1000);
+
+    // The loan came in as chips, so paying it back takes those chips away again.
+    alex.send({ type: 'pay_back' });
+    const paid = await alex.waitForState((s) => alex.me(s).debt === 0);
+    expect(alex.me(paid)).toMatchObject({ chips: 0, debt: 0, earnings: -1000 });
+    expect(paid.log.some((e) => e.text === 'Alex pays back 1,000 and owes nothing')).toBe(true);
+    expect((await alex.expectError({ type: 'pay_back' })).code).toBe('cannot_pay_back');
   });
 });

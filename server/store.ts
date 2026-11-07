@@ -7,11 +7,14 @@ interface Entry {
   chips: number;
   /** Chips borrowed to buy back in and not paid back. Zero for most players. */
   debt: number;
+  /** Running profit or loss from the cards. Can be negative. Borrowing and paying back do not change it. */
+  earnings: number;
 }
 
 /**
  * Chips saved per username in `<dataDir>/players.json`, which maps each username to its chip count,
- * or to `{ "chips": 0, "debt": 1000 }` for a player who owes borrowed chips.
+ * or to `{ "chips": 0, "debt": 1000, "earnings": -1000 }` for a player who owes borrowed chips or has
+ * earnings other than 0 (`debt` and `earnings` are left out when 0).
  * Usernames match ignoring case. The file is only written by `save()`, using a temporary file
  * and a rename so a crash never leaves a half-written file.
  */
@@ -42,15 +45,16 @@ export class PlayerStore {
     const valid = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
     for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
       const key = name.toLowerCase();
-      const obj = value !== null && typeof value === 'object' ? (value as { chips?: unknown; debt?: unknown }) : null;
+      const obj = value !== null && typeof value === 'object' ? (value as { chips?: unknown; debt?: unknown; earnings?: unknown }) : null;
       const chips = obj ? obj.chips : value;
       const debt = obj && obj.debt !== undefined ? obj.debt : 0;
-      if (!valid(chips) || !valid(debt)) {
+      const earnings = obj && obj.earnings !== undefined ? obj.earnings : 0;
+      if (!valid(chips) || !valid(debt) || typeof earnings !== 'number' || !Number.isFinite(earnings)) {
         this.warn(`players.json: ignoring "${name}", its chip count is not a valid number`);
         continue;
       }
       if (this.entries.has(key)) continue; // first spelling wins
-      this.entries.set(key, { name, chips: Math.floor(chips), debt: Math.floor(debt) });
+      this.entries.set(key, { name, chips: Math.floor(chips), debt: Math.floor(debt), earnings: Math.trunc(earnings) });
     }
   }
 
@@ -72,16 +76,17 @@ export class PlayerStore {
   }
 
   /**
-   * Sets the chips for a username in memory, and the debt when given (it is kept as it was otherwise).
-   * Call `save()` to write them to disk.
+   * Sets the chips for a username in memory, and the debt and earnings when given (they are kept as
+   * they were otherwise). Call `save()` to write them to disk.
    */
-  set(name: string, chips: number, debt?: number): void {
+  set(name: string, chips: number, debt?: number, earnings?: number): void {
     const key = name.toLowerCase();
     const existing = this.entries.get(key);
     this.entries.set(key, {
       name: existing?.name ?? name,
       chips: Math.max(0, Math.floor(chips)),
       debt: Math.max(0, Math.floor(debt ?? existing?.debt ?? 0)),
+      earnings: Math.trunc(earnings ?? existing?.earnings ?? 0),
     });
   }
 
@@ -89,8 +94,10 @@ export class PlayerStore {
   save(): void {
     try {
       mkdirSync(this.dataDir, { recursive: true });
-      const data: Record<string, number | { chips: number; debt: number }> = {};
-      for (const { name, chips, debt } of this.entries.values()) data[name] = debt > 0 ? { chips, debt } : chips;
+      const data: Record<string, number | { chips: number; debt?: number; earnings?: number }> = {};
+      for (const { name, chips, debt, earnings } of this.entries.values()) {
+        data[name] = debt > 0 || earnings !== 0 ? { chips, ...(debt > 0 ? { debt } : {}), ...(earnings !== 0 ? { earnings } : {}) } : chips;
+      }
       const tmp = `${this.file}.tmp`;
       writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
       renameSync(tmp, this.file);

@@ -1,7 +1,7 @@
 // The felt: dealer at the top, my hand large at the bottom, other players on an arc between.
 
 import { isHiddenCard, type HandView, type PlayerView, type PublicSettings, type TableState } from '../shared/types.js';
-import { app, confirmKick, isHost, serverNow } from './app.js';
+import { app, confirmKick, isHost, send, serverNow } from './app.js';
 import {
   betChip,
   handEl,
@@ -15,7 +15,7 @@ import {
   totalBadge,
   totalLabel,
 } from './cards.js';
-import { $, fmt, h, prefersReducedMotion } from './dom.js';
+import { $, fmt, fmtSigned, h, prefersReducedMotion } from './dom.js';
 import { icon } from './icons.js';
 import { playAllIn, playChip, playDeal, playShuffle } from './sound.js';
 
@@ -50,6 +50,14 @@ export function rulesText(st: PublicSettings): string {
   const pays = st.blackjackPayout === '3:2' ? '3 to 2' : '6 to 5';
   const soft = st.dealerHitsSoft17 ? 'Dealer hits soft 17' : 'Dealer stands on soft 17';
   return `Blackjack pays ${pays} · ${soft}`;
+}
+
+/** "Earnings +250" in green, or in red when negative. */
+export function earningsEl(earnings: number): HTMLElement {
+  const el = h('span', earnings > 0 ? 'earnings num is-up' : earnings < 0 ? 'earnings num is-down' : 'earnings num');
+  el.title = 'What you have won or lost at the table. Borrowing and paying back do not change it.';
+  el.append(h('span', 'earnings-label', 'Earnings'), document.createTextNode(` ${fmtSigned(earnings)}`));
+  return el;
 }
 
 function phaseText(s: TableState, self: PlayerView): { text: string; tone: '' | 'accent'; ring: boolean } {
@@ -336,6 +344,14 @@ function renderMe(s: TableState, self: PlayerView, pendingBet: number, counts: {
   const name = h('div', 'my-name');
   name.append(h('span', 'name', self.name), h('span', 'dot', '·'), h('span', 'num', `${fmt(self.chips)} chips`));
   if (self.debt > 0) name.append(h('span', 'owes num', `owes ${fmt(self.debt)}`));
+  if (self.debt > 0 && self.chips > 0 && s.phase === 'betting' && betOf(self) === 0) {
+    const pay = h('button', 'link-btn', 'Pay back');
+    pay.type = 'button';
+    pay.title = `Pay ${fmt(Math.min(self.chips, self.debt))} of your chips towards what you owe`;
+    pay.addEventListener('click', () => send({ type: 'pay_back' }));
+    name.append(pay);
+  }
+  name.append(earningsEl(self.earnings));
   nodes.push(name);
   spot.replaceChildren(...nodes);
   spot.classList.toggle('is-split', split);

@@ -956,3 +956,47 @@
   margin-right: 6px;
   color: var(--text-muted);
 }
+
+.my-name {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.earnings {
+  margin-left: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border-radius: 999px;
+}
+
+.earnings.is-up {
+  color: var(--accent);
+}
+
+.earnings.is-down {
+  color: var(--loss);
+}
+
+.earnings-label {
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.link-btn {
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  background: var(--accent-soft);
+}

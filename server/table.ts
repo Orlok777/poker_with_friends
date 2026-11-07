@@ -107,6 +107,8 @@ interface Player {
   chips: number;
   /** Borrowed chips not paid back. Saved with the chips. */
   debt: number;
+  /** Profit or loss from the cards, saved with the chips. Reset to 0 by Reset chips. */
+  earnings: number;
   ready: boolean;
   seat: number | null;
   conn: Connection | null;
@@ -258,6 +260,8 @@ export class Table {
         return this.onResetChips(conn, p);
       case 'borrow':
         return this.onBorrow(conn, p);
+      case 'pay_back':
+        return this.onPayBack(conn, p);
       case 'kick_player':
         return this.onKick(conn, p, msg.playerId);
       default:
@@ -312,6 +316,7 @@ export class Table {
     const name = saved?.name ?? username;
     const chips = saved ? saved.chips : this.settings.startingChips;
     const debt = saved ? saved.debt : 0;
+    const earnings = saved ? saved.earnings : 0;
     if (!saved) this.store.set(name, chips);
 
     const p: Player = {
@@ -321,6 +326,7 @@ export class Table {
       token: randomBytes(16).toString('hex'),
       chips,
       debt,
+      earnings,
       ready: false,
       seat: null,
       conn,
@@ -414,7 +420,7 @@ export class Table {
       p.chips += p.hands[0]!.bet;
       p.hands = [];
     }
-    this.store.set(p.name, p.chips, p.debt);
+    this.store.set(p.name, p.chips, p.debt, p.earnings);
     this.store.save();
     this.clearHold(p);
     if (p.seat !== null) this.seats[p.seat] = null;
@@ -609,11 +615,29 @@ export class Table {
       return this.sendError(conn, 'cannot_reset', 'Chips can only be reset in the waiting room or before you bet');
     }
     p.chips = this.settings.startingChips;
-    p.debt = 0; // a reset is a fresh start, so any loan is wiped too
-    this.store.set(p.name, p.chips, p.debt);
+    p.debt = 0; // a reset is a fresh start, so any loan and the earnings are wiped too
+    p.earnings = 0;
+    this.store.set(p.name, p.chips, p.debt, p.earnings);
     this.store.save();
     this.addLog(`${p.name} reset their chips to ${p.chips}`);
     this.broadcast();
+  }
+
+  /** Pays borrowed chips back out of the player's chips, as much as the chips allow. */
+  private onPayBack(conn: Connection, p: Player): void {
+    const ok = this.phase === 'waiting' || (this.phase === 'betting' && !hasBet(p));
+    if (!ok) return this.sendError(conn, 'cannot_pay_back', 'You can only pay back in the waiting room or before you bet');
+    if (p.debt <= 0) return this.sendError(conn, 'cannot_pay_back', 'You do not owe anything');
+    if (p.chips <= 0) return this.sendError(conn, 'cannot_pay_back', 'You have no chips to pay back with');
+    const amount = Math.min(p.chips, p.debt);
+    p.chips -= amount;
+    p.debt -= amount;
+    this.store.set(p.name, p.chips, p.debt, p.earnings);
+    this.store.save();
+    const n = (x: number) => x.toLocaleString('en-US');
+    this.addLog(p.debt > 0 ? `${p.name} pays back ${n(amount)} and still owes ${n(p.debt)}` : `${p.name} pays back ${n(amount)} and owes nothing`);
+    this.broadcast();
+    this.checkBettingDone(); // paying back can leave the player without chips to bet
   }
 
   /** A player who is out of chips borrows a buy-in (the starting chips) and owes it. */
@@ -628,7 +652,7 @@ export class Table {
     const amount = this.settings.startingChips;
     p.chips += amount;
     p.debt += amount;
-    this.store.set(p.name, p.chips, p.debt);
+    this.store.set(p.name, p.chips, p.debt, p.earnings);
     this.store.save();
     const n = (x: number) => x.toLocaleString('en-US');
     this.addLog(`${p.name} borrows ${n(amount)} and now owes ${n(p.debt)}`);
@@ -899,6 +923,7 @@ export class Table {
         const r = settleHand(hd.cards, this.dealerCards, hd.bet, this.settings.blackjackPayout, hd.fromSplit);
         // The bet was taken when it was placed, so the bet and the winnings come back together.
         p.chips += hd.bet + r.delta;
+        p.earnings += r.delta;
         hd.outcome = r.outcome;
         hd.delta = r.delta;
         results.push({ playerId: p.id, name: p.name, hand: i, outcome: r.outcome, delta: r.delta });
@@ -906,7 +931,7 @@ export class Table {
         this.addLog(`${name} ${describeOutcome(r.outcome, r.delta)}`);
       });
     }
-    for (const p of this.players.values()) this.store.set(p.name, p.chips, p.debt);
+    for (const p of this.players.values()) this.store.set(p.name, p.chips, p.debt, p.earnings);
     this.store.save();
 
     this.broadcast();
@@ -991,6 +1016,7 @@ export class Table {
       ready: p.ready,
       connected: p.conn !== null,
       debt: p.debt,
+      earnings: p.earnings,
       seat: p.seat,
       hands: p.hands.map((hd, i) => this.handView(p, hd, i)),
       activeHand: p.activeHand,
