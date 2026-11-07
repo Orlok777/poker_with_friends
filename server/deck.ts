@@ -1,4 +1,4 @@
-import { randomInt } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { RANKS, SUITS, type Card } from '../shared/types.js';
 
 /** Returns a function giving floats in [0, 1). The same seed always gives the same sequence. */
@@ -13,17 +13,16 @@ export function mulberry32(seed: number): () => number {
   };
 }
 
-/** A generator seeded from the operating system's randomness. */
+/** A fresh seed from the operating system's randomness. */
 export function randomSeed(): number {
-  return randomInt(0, 2 ** 32);
+  return randomBytes(4).readUInt32LE(0);
 }
 
-export function buildDecks(decks: number): Card[] {
+/** The 52 cards in a fixed order. */
+export function fullDeck(): Card[] {
   const cards: Card[] = [];
-  for (let d = 0; d < decks; d++) {
-    for (const suit of SUITS) {
-      for (const rank of RANKS) cards.push({ rank, suit });
-    }
+  for (const suit of SUITS) {
+    for (const rank of RANKS) cards.push({ rank, suit });
   }
   return cards;
 }
@@ -37,65 +36,32 @@ export function shuffle<T>(items: T[], rng: () => number): T[] {
   return items;
 }
 
-export const RESHUFFLE_AT = 0.75;
+const same = (a: Card, b: Card) => a.rank === b.rank && a.suit === b.suit;
 
-export class Shoe {
-  private cards: Card[] = [];
-  private total = 0;
-  private rigged: Card[];
-  /** Set to true when `draw` had to build a fresh shoe because it ran dry. The caller clears it. */
-  autoReshuffled = false;
+/** One 52-card deck, shuffled once, for one hand. */
+export class Deck {
+  private readonly cards: Card[];
 
   /**
-   * @param rigged cards that will be drawn first, in order. For tests only; a reshuffle discards them.
+   * @param rigged cards dealt first, in this order. For tests only. They are taken out of the
+   * shuffled rest, so the deck never holds a card twice.
    */
-  constructor(
-    private readonly decks: number,
-    private readonly rng: () => number,
-    rigged: Card[] = [],
-  ) {
-    this.shuffle();
-    this.rigged = [...rigged];
+  constructor(rng: () => number, rigged: Card[] = []) {
+    const rest = shuffle(
+      fullDeck().filter((c) => !rigged.some((r) => same(r, c))),
+      rng,
+    );
+    // draw() pops from the end, so the rigged cards go last, reversed.
+    this.cards = [...rest, ...[...rigged].reverse()];
   }
 
-  /** Builds a fresh shuffled shoe, optionally leaving out cards that are currently on the table. */
-  shuffle(inPlay: Card[] = []): void {
-    const cards = buildDecks(this.decks);
-    for (const used of inPlay) {
-      const i = cards.findIndex((c) => c.rank === used.rank && c.suit === used.suit);
-      if (i >= 0) cards.splice(i, 1);
-    }
-    shuffle(cards, this.rng);
-    this.cards = cards;
-    this.total = cards.length;
-    this.rigged = [];
-  }
-
-  /** Cards left before the shoe is empty. */
   get remaining(): number {
     return this.cards.length;
   }
 
-  /** Fraction of the shoe that has been dealt, from 0 to 1. */
-  get dealtFraction(): number {
-    return this.total === 0 ? 1 : 1 - this.cards.length / this.total;
-  }
-
-  needsReshuffle(): boolean {
-    return this.dealtFraction >= RESHUFFLE_AT;
-  }
-
-  /**
-   * Draws one card. If the shoe is empty, builds a new shoe from the cards not in `inPlay`
-   * and sets `autoReshuffled`.
-   */
-  draw(inPlay: Card[] = []): Card {
-    const rigged = this.rigged.shift();
-    if (rigged) return rigged;
-    if (this.cards.length === 0) {
-      this.shuffle(inPlay);
-      this.autoReshuffled = true;
-    }
-    return this.cards.pop()!;
+  draw(): Card {
+    const card = this.cards.pop();
+    if (!card) throw new Error('The deck is empty');
+    return card;
   }
 }
