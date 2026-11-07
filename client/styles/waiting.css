@@ -465,3 +465,7 @@
   }
 }
 
+
+.who-chips.has-debt {
+  color: var(--loss);
+}

@@ -271,6 +271,7 @@ function seatEl(s: TableState, p: PlayerView, counts: { added: number }): HTMLEl
 
   const foot = h('div', 'seat-foot');
   foot.append(...ids.map((i) => betSpot(s, p, i, 0)), h('span', 'seat-chips num', fmt(p.chips)));
+  if (p.debt > 0) foot.append(h('span', 'owes num', `owes ${fmt(p.debt)}`));
   seat.append(foot);
 
   if (isHost()) {
@@ -334,6 +335,7 @@ function renderMe(s: TableState, self: PlayerView, pendingBet: number, counts: {
   }
   const name = h('div', 'my-name');
   name.append(h('span', 'name', self.name), h('span', 'dot', '·'), h('span', 'num', `${fmt(self.chips)} chips`));
+  if (self.debt > 0) name.append(h('span', 'owes num', `owes ${fmt(self.debt)}`));
   nodes.push(name);
   spot.replaceChildren(...nodes);
   spot.classList.toggle('is-split', split);

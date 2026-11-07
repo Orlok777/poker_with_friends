@@ -105,6 +105,8 @@ interface Player {
   key: string;
   token: string;
   chips: number;
+  /** Borrowed chips not paid back. Saved with the chips. */
+  debt: number;
   ready: boolean;
   seat: number | null;
   conn: Connection | null;
@@ -252,6 +254,8 @@ export class Table {
         return this.onAction(conn, p, msg.action);
       case 'reset_chips':
         return this.onResetChips(conn, p);
+      case 'borrow':
+        return this.onBorrow(conn, p);
       case 'kick_player':
         return this.onKick(conn, p, msg.playerId);
       default:
@@ -298,6 +302,7 @@ export class Table {
     const saved = this.store.get(username);
     const name = saved?.name ?? username;
     const chips = saved ? saved.chips : this.settings.startingChips;
+    const debt = saved ? saved.debt : 0;
     if (!saved) this.store.set(name, chips);
 
     const p: Player = {
@@ -306,6 +311,7 @@ export class Table {
       key,
       token: randomBytes(16).toString('hex'),
       chips,
+      debt,
       ready: false,
       seat: null,
       conn,
@@ -399,7 +405,7 @@ export class Table {
       p.chips += p.hands[0]!.bet;
       p.hands = [];
     }
-    this.store.set(p.name, p.chips);
+    this.store.set(p.name, p.chips, p.debt);
     this.store.save();
     this.clearHold(p);
     if (p.seat !== null) this.seats[p.seat] = null;
@@ -551,9 +557,29 @@ export class Table {
       return this.sendError(conn, 'cannot_reset', 'Chips can only be reset in the waiting room or before you bet');
     }
     p.chips = this.settings.startingChips;
-    this.store.set(p.name, p.chips);
+    p.debt = 0; // a reset is a fresh start, so any loan is wiped too
+    this.store.set(p.name, p.chips, p.debt);
     this.store.save();
     this.addLog(`${p.name} reset their chips to ${p.chips}`);
+    this.broadcast();
+  }
+
+  /** A player who is out of chips borrows a buy-in (the starting chips) and owes it. */
+  private onBorrow(conn: Connection, p: Player): void {
+    if (this.phase !== 'betting' || this.deadline === null) {
+      return this.sendError(conn, 'cannot_borrow', 'You can only borrow chips while bets are being placed');
+    }
+    if (p.seat === null) return this.sendError(conn, 'not_seated', 'You do not have a seat yet');
+    if (hasBet(p) || p.chips >= this.settings.minBet) {
+      return this.sendError(conn, 'cannot_borrow', 'You can only borrow when you are out of chips');
+    }
+    const amount = this.settings.startingChips;
+    p.chips += amount;
+    p.debt += amount;
+    this.store.set(p.name, p.chips, p.debt);
+    this.store.save();
+    const n = (x: number) => x.toLocaleString('en-US');
+    this.addLog(`${p.name} borrows ${n(amount)} and now owes ${n(p.debt)}`);
     this.broadcast();
   }
 
@@ -828,7 +854,7 @@ export class Table {
         this.addLog(`${name} ${describeOutcome(r.outcome, r.delta)}`);
       });
     }
-    for (const p of this.players.values()) this.store.set(p.name, p.chips);
+    for (const p of this.players.values()) this.store.set(p.name, p.chips, p.debt);
     this.store.save();
 
     this.broadcast();
@@ -910,6 +936,7 @@ export class Table {
       chips: p.chips,
       ready: p.ready,
       connected: p.conn !== null,
+      debt: p.debt,
       seat: p.seat,
       hands: p.hands.map((hd, i) => this.handView(p, hd, i)),
       activeHand: p.activeHand,

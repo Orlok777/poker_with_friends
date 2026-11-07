@@ -943,3 +943,16 @@
     --cw: 56px;
   }
 }
+
+/* Chips borrowed from the bank. */
+.owes {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--loss);
+}
+
+.my-name .owes::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--text-muted);
+}

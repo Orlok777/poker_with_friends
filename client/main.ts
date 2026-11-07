@@ -1,5 +1,6 @@
 import type { ClientMsg, ServerMsg } from '../shared/types.js';
 import { app, me, send, toast } from './app.js';
+import { initBorrow, renderBorrow } from './borrow.js';
 import { clearBusy, getPendingBet, initControls, renderControls } from './controls.js';
 import { $, storageGet, storageSet } from './dom.js';
 import { hydrateIcons, icon } from './icons.js';
@@ -262,6 +263,7 @@ function render(): void {
     renderLog(s);
     renderRules(s);
   }
+  renderBorrow(s, self);
 }
 
 // --------------------------------------------------------------------- init
@@ -269,6 +271,7 @@ function render(): void {
 hydrateIcons();
 initWaiting();
 initControls();
+initBorrow();
 initPanels();
 showScreen(null);
 connect();

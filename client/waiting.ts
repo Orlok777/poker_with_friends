@@ -295,7 +295,8 @@ function playerRow(s: TableState, p: PlayerView, host: boolean): HTMLElement {
   if (p.id === app.myId) nameLine.append(h('span', 'tag', 'You'));
   if (p.id === s.hostId) nameLine.append(h('span', 'tag tag-accent', 'Host'));
   if (!p.connected) nameLine.append(h('span', 'tag', 'Away'));
-  who.append(nameLine, h('span', 'who-chips num', `${fmt(p.chips)} chips`));
+  const owes = p.debt > 0 ? ` · owes ${fmt(p.debt)}` : '';
+  who.append(nameLine, h('span', p.debt > 0 ? 'who-chips has-debt num' : 'who-chips num', `${fmt(p.chips)} chips${owes}`));
   const status = h('span', p.ready ? 'ready-pill is-ready' : 'ready-pill', p.ready ? 'Ready' : 'Not ready');
   li.append(avatar, who, status);
   if (host && p.id !== app.myId) {

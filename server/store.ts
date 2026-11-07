@@ -5,10 +5,13 @@ interface Entry {
   /** Display name, keeping the case that was used first. */
   name: string;
   chips: number;
+  /** Chips borrowed to buy back in and not paid back. Zero for most players. */
+  debt: number;
 }
 
 /**
- * Chips saved per username in `<dataDir>/players.json`, which maps each username to its chip count.
+ * Chips saved per username in `<dataDir>/players.json`, which maps each username to its chip count,
+ * or to `{ "chips": 0, "debt": 1000 }` for a player who owes borrowed chips.
  * Usernames match ignoring case. The file is only written by `save()`, using a temporary file
  * and a rename so a crash never leaves a half-written file.
  */
@@ -36,14 +39,18 @@ export class PlayerStore {
       this.backUpBrokenFile(err);
       return;
     }
-    for (const [name, chips] of Object.entries(parsed as Record<string, unknown>)) {
+    const valid = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+    for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
       const key = name.toLowerCase();
-      if (typeof chips !== 'number' || !Number.isFinite(chips) || chips < 0) {
+      const obj = value !== null && typeof value === 'object' ? (value as { chips?: unknown; debt?: unknown }) : null;
+      const chips = obj ? obj.chips : value;
+      const debt = obj && obj.debt !== undefined ? obj.debt : 0;
+      if (!valid(chips) || !valid(debt)) {
         this.warn(`players.json: ignoring "${name}", its chip count is not a valid number`);
         continue;
       }
       if (this.entries.has(key)) continue; // first spelling wins
-      this.entries.set(key, { name, chips: Math.floor(chips) });
+      this.entries.set(key, { name, chips: Math.floor(chips), debt: Math.floor(debt) });
     }
   }
 
@@ -64,19 +71,26 @@ export class PlayerStore {
     return this.entries.get(name.toLowerCase());
   }
 
-  /** Sets the chips for a username in memory. Call `save()` to write them to disk. */
-  set(name: string, chips: number): void {
+  /**
+   * Sets the chips for a username in memory, and the debt when given (it is kept as it was otherwise).
+   * Call `save()` to write them to disk.
+   */
+  set(name: string, chips: number, debt?: number): void {
     const key = name.toLowerCase();
     const existing = this.entries.get(key);
-    this.entries.set(key, { name: existing?.name ?? name, chips: Math.max(0, Math.floor(chips)) });
+    this.entries.set(key, {
+      name: existing?.name ?? name,
+      chips: Math.max(0, Math.floor(chips)),
+      debt: Math.max(0, Math.floor(debt ?? existing?.debt ?? 0)),
+    });
   }
 
   /** Writes the file. Never throws: a failed save is logged and the game goes on. */
   save(): void {
     try {
       mkdirSync(this.dataDir, { recursive: true });
-      const data: Record<string, number> = {};
-      for (const { name, chips } of this.entries.values()) data[name] = chips;
+      const data: Record<string, number | { chips: number; debt: number }> = {};
+      for (const { name, chips, debt } of this.entries.values()) data[name] = debt > 0 ? { chips, debt } : chips;
       const tmp = `${this.file}.tmp`;
       writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
       renameSync(tmp, this.file);

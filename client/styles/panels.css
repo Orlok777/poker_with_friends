@@ -168,3 +168,68 @@
     width: auto;
   }
 }
+
+/* ------------------------------------------------------------ borrow prompt */
+
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  animation: fade-in var(--t-fade) var(--ease);
+}
+
+.modal-scrim[hidden] {
+  display: none;
+}
+
+.modal {
+  width: min(380px, 100%);
+  padding: 26px 24px 22px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-3);
+  animation: pop-in var(--t-fade) var(--ease);
+}
+
+.modal h2 {
+  margin: 12px 0 8px;
+  font-size: 20px;
+}
+
+.modal p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.modal .modal-tab {
+  margin-top: 10px;
+  padding: 8px 12px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: var(--surface-2);
+  border-radius: 10px;
+}
+
+.modal-badge .chip-disc {
+  display: inline-block;
+  width: 44px;
+  height: 44px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.modal-actions button {
+  flex: 1 1 0;
+  min-width: 0;
+}

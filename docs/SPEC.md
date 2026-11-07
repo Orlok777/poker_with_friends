@@ -103,11 +103,11 @@ Use a token rather than "connections from localhost". Tunnel traffic also arrive
 
 Chips belong to a username, are saved on the host's PC, and survive server restarts. There are no passwords, which is fine among friends: anyone who types a username gets its chips.
 
-- **File:** `data/players.json` maps each username to its chip count. Usernames match ignoring case, and the display keeps the case first used.
+- **File:** `data/players.json` maps each username to its chip count, or to `{ "chips": n, "debt": n }` when the player owes the bank. Usernames match ignoring case, and the display keeps the case first used.
 - **New username:** starts with the starting-chips setting. A returning username keeps its saved chips, even if the host changed starting chips.
 - **Saving:** after each round is settled and when a player leaves. Write to a temporary file and then rename it, so a crash never leaves a half-written file.
-- **Reset chips:** a button that sets that player's chips back to the starting amount, after a confirmation. It is available in the waiting room and in the betting phase before the player bets.
-- **Out of chips:** a player at 0 sits out and is shown the Reset chips button.
+- **Reset chips:** a button that sets that player's chips back to the starting amount and clears their debt, after a confirmation. It is available in the waiting room and in the betting phase before the player bets.
+- **Out of chips:** a player whose chips are below the minimum bet cannot bet and sits out until they borrow. At the start of each betting phase they get an in-page prompt (not a browser dialog) offering to borrow a buy-in. "Borrow" adds the starting-chips amount to their chips and to their debt, and logs `<name> borrows 1,000 and now owes 1,000`. "Not now" (or Esc, or a click outside) closes the prompt for that round; a Borrow chips button in the betting bar opens it again. Chips are never negative: what the player owes is the debt, shown in red as "owes 1,000" next to their chips (at the table and in the waiting room). The debt is saved with the player, can grow with every loan, and is not paid back automatically. Borrowing is refused unless betting is open and the player is seated, has not bet and has fewer chips than the minimum bet (`cannot_borrow`).
 - **Same username twice:** a username already at the table can't join again, unless it's the same player reconnecting with their token.
 - **Allowed usernames:** 1 to 16 characters made of letters, numbers, spaces, `-` and `_`.
 
@@ -141,6 +141,7 @@ Every message is JSON with a `type` field, and the types are defined once in `/s
 | `place_bet` | amount | Betting phase |
 | `action` | hit, stand, double or split | That player's turn |
 | `reset_chips` | none | Waiting room, or betting phase before that player bets |
+| `borrow` | none | Betting phase, seated, no bet yet, chips below the minimum bet |
 | `kick_player` | playerId | Host only |
 
 **Server to client**
@@ -174,7 +175,7 @@ The game has three screens: join, waiting room and table. All of them are served
    - The current player's seat is highlighted, with a countdown bar for the turn timer.
    - Action bar with Hit, Stand, Double and Split (shortcuts H, S, D and P), greyed out when not allowed. Split is always shown.
    - After a split, both hands sit side by side in the player's spot, each with its own total badge, bet chip and result. The hand being played is highlighted.
-   - Betting bar with the label "Min 10" (the minimum bet), chip buttons for 10, 25, 100 and 500, plus Clear, Repeat, ×2, All in and Confirm, and Reset chips.
+   - Betting bar with the label "Min 10" (the minimum bet), chip buttons for 10, 25, 100 and 500, plus Clear, Repeat, ×2, All in and Confirm. A player who is out of chips sees Borrow chips instead of Confirm.
    - **All in:** the first click turns the button into a highlighted "Confirm all in (1,050)?" showing the player's full chips; a second click bets the whole stack and confirms it. It goes back to normal after 3 s without a second click, or when the player clicks anything else. It is enabled only when the player has at least the minimum bet. An all-in bet shows an "ALL IN" tag on its chip, and the log says "<name> goes all in (1,050)".
    - A banner with the round results.
    - An event log of recent actions, such as "Alex hits: 7, total 15".
@@ -258,6 +259,7 @@ Phase 1 is finished when every item below passes. Claude Code should check each 
 - [ ] In two browser tabs, the host's setting changes show up for the other player, and settings lock after Start
 - [ ] Two players can play 5 full rounds with the correct chip counts after each
 - [ ] Chips survive a server restart, a new username gets the starting chips, and Reset chips works
+- [ ] A player with no chips gets the borrow prompt, can borrow and keep playing, and the debt shows as "owes N" and survives a restart
 - [ ] A username already at the table is rejected, and a wrong password is rejected
 - [ ] The host can kick a player, who then can't rejoin with that username
 - [ ] The turn timer stands for an idle player, and the betting timer sits them out

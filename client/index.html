@@ -150,7 +150,7 @@
             <button id="repeat-bet" type="button" class="ghost bet-tool" title="Repeat your last bet"><span data-icon="repeat"></span><span class="tool-label">Repeat</span><span id="repeat-amount" class="num"></span></button>
             <button id="double-bet" type="button" class="ghost bet-tool" title="Double the bet"><span class="x2">×2</span></button>
             <button id="allin-btn" type="button" class="ghost bet-tool allin-btn" title="Bet all your chips"><span id="allin-label">All in</span></button>
-            <button id="reset-btn-table" type="button" class="primary bet-reset" hidden><span data-icon="reset"></span>Reset chips</button>
+            <button id="borrow-btn" type="button" class="primary bet-reset" hidden>Borrow chips</button>
             <button id="confirm-bet" type="button" class="primary confirm-btn"><span data-icon="check"></span>Confirm<kbd>Enter</kbd></button>
           </div>
         </div>
@@ -184,6 +184,18 @@
       </div>
     </section>
 
+    <div id="borrow-scrim" class="modal-scrim" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="borrow-title" aria-describedby="borrow-text">
+        <div class="modal-badge" aria-hidden="true"><span class="chip-disc c500"></span></div>
+        <h2 id="borrow-title">Out of chips</h2>
+        <p id="borrow-text"></p>
+        <p id="borrow-tab" class="modal-tab"></p>
+        <div class="modal-actions">
+          <button id="borrow-no" type="button" class="ghost big">Not now</button>
+          <button id="borrow-yes" type="button" class="primary big"></button>
+        </div>
+      </div>
+    </div>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
     <script type="module" src="./main.ts"></script>

@@ -1,7 +1,8 @@
 // Betting panel and action buttons under the felt, plus their keyboard shortcuts.
 
 import type { ActionName } from '../shared/types.js';
-import { app, me, resetChips, send } from './app.js';
+import { app, me, send } from './app.js';
+import { openBorrowPrompt } from './borrow.js';
 import { slideFrom, ringEl } from './cards.js';
 import { $, fmt, h } from './dom.js';
 import { playAllIn, playChip } from './sound.js';
@@ -171,7 +172,7 @@ export function initControls(): void {
     },
     true,
   );
-  $('reset-btn-table').addEventListener('click', resetChips);
+  $('borrow-btn').addEventListener('click', openBorrowPrompt);
   for (const action of Object.keys(ACTION_BUTTONS) as ActionName[]) {
     $(ACTION_BUTTONS[action]).addEventListener('click', () => act(action));
   }
@@ -221,9 +222,9 @@ export function renderControls(): void {
   $('repeat-amount').textContent = lastBet > 0 ? fmt(repeatTo) : '';
   $<HTMLButtonElement>('double-bet').disabled = !canBet || busy || pendingBet === 0 || pendingBet >= cap;
   $<HTMLButtonElement>('confirm-bet').disabled = !canBet || busy || pendingBet < s.settings.minBet;
-  const reset = $<HTMLButtonElement>('reset-btn-table');
-  reset.hidden = !outOfChips;
-  reset.disabled = busy;
+  const borrow = $<HTMLButtonElement>('borrow-btn');
+  borrow.hidden = !outOfChips || s.deadline === null;
+  borrow.disabled = busy;
 
   // ---- actions: shown for the whole round so the layout does not jump between phases
   const inRound = seated && (self.hands[0]?.cards.length ?? 0) > 0;
@@ -239,7 +240,7 @@ export function renderControls(): void {
   // ---- note
   const note = $('watch-note');
   let text = '';
-  if (seated && s.phase === 'betting' && outOfChips) text = "You're out of chips. Reset them to keep playing.";
+  if (seated && s.phase === 'betting' && outOfChips) text = "You're out of chips. Borrow a buy-in to keep playing.";
   else if (seated && s.phase === 'betting' && myBet > 0) text = 'Bet placed. Waiting for the others.';
   else if (seated && self.hands.length === 0 && s.phase !== 'betting') text = "You're sitting out this round.";
   note.textContent = text;

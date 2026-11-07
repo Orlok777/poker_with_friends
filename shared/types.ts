@@ -148,6 +148,8 @@ export interface PlayerView {
   chips: number;
   ready: boolean;
   connected: boolean;
+  /** Chips borrowed to buy back in and not paid back. Net worth is `chips - debt`. */
+  debt: number;
   /** Seat index, or null when watching or waiting for a seat. */
   seat: number | null;
   /** Empty when the player has no hand (sitting out, watching, or between rounds). Two after a split. */
@@ -208,6 +210,7 @@ export type ClientMsg =
   | { type: 'place_bet'; amount: number }
   | { type: 'action'; action: ActionName }
   | { type: 'reset_chips' }
+  | { type: 'borrow' }
   | { type: 'kick_player'; playerId: string };
 
 export type ErrorCode =
@@ -230,7 +233,8 @@ export type ErrorCode =
   | 'insufficient_chips'
   | 'action_not_allowed'
   | 'unknown_player'
-  | 'cannot_reset';
+  | 'cannot_reset'
+  | 'cannot_borrow';
 
 export interface RoundResultEntry {
   playerId: string;

@@ -788,3 +788,53 @@ describe('shoe reshuffles', () => {
     expect(st.log.some((l) => l.text.includes('Shuffling a new shoe'))).toBe(true);
   });
 });
+
+describe('borrowing', () => {
+  it('lets a player with no chips borrow a buy-in, keeps the debt across a restart, and clears it on reset', async () => {
+    const rigged = cards('10 10 8 9'); // Alex 18 against 19
+    const first = await h.boot({ rigged, timing: { settleMs: 200, bettingMs: 5000, turnMs: 5000 } });
+    const alex = await h.client(first.srv);
+    await alex.join('Alex', { hostToken: first.srv.hostToken });
+    alex.send({ type: 'set_ready', ready: true });
+    alex.send({ type: 'start_game' });
+    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
+
+    // With chips left there is nothing to borrow.
+    expect((await alex.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
+
+    alex.send({ type: 'place_bet', amount: 1000 }); // all in, and lose
+    await alex.waitForState((s) => s.phase === 'player_turns' && s.turn === alex.id);
+    alex.send({ type: 'action', action: 'stand' });
+    const lost = await alex.waitForState((s) => s.phase === 'settle');
+    expect(alex.me(lost).chips).toBe(0);
+    expect(alex.me(lost).debt).toBe(0);
+
+    // Not while results are showing, only while bets are being placed.
+    expect((await alex.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
+    await alex.waitForState((s) => s.phase === 'betting' && s.deadline !== null);
+
+    alex.send({ type: 'borrow' });
+    const borrowed = await alex.waitForState((s) => alex.me(s).debt === 1000);
+    expect(alex.me(borrowed).chips).toBe(1000);
+    expect(borrowed.log.some((e) => e.text === 'Alex borrows 1,000 and now owes 1,000')).toBe(true);
+    expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))).toEqual({
+      Alex: { chips: 1000, debt: 1000 },
+    });
+
+    // Chips in hand again, so a second loan is refused.
+    expect((await alex.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
+
+    // The tab survives a restart.
+    await first.srv.close();
+    const second = await h.boot({}, first.dataDir);
+    const back = await h.client(second.srv);
+    await back.join('Alex');
+    expect(back.me().chips).toBe(1000);
+    expect(back.me().debt).toBe(1000);
+
+    // Resetting chips wipes the tab.
+    back.send({ type: 'reset_chips' });
+    await back.waitForState((s) => back.me(s).debt === 0);
+    expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8')).Alex).toBe(1000);
+  });
+});
