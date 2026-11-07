@@ -24,7 +24,7 @@ import {
   type TableState,
   type YouView,
 } from '../shared/types.js';
-import { PACING, handsRevealMs, leadMs, streetRevealMs } from '../shared/pacing.js';
+import { PACING, handsRevealMs, leadMs, spotlightSequenceMs, streetRevealMs } from '../shared/pacing.js';
 import { Deck, mulberry32, randomSeed } from './deck.js';
 import { HoldemHand, type HandOutcome } from './game.js';
 import { bestHand, inSentence } from './hand.js';
@@ -44,13 +44,14 @@ export const RESULT_LOOK_MS = 3000;
 export const POT_STEP_MS = 2000;
 
 /**
- * The pause after a showdown, worked out in one place. It starts when the showdown is sent to the clients:
- * they first show the board cards they have not shown yet (`boardCards`) and flip the hands that are
- * newly face up (`hands`), wait a beat, then light the winners of each pot (`pots`), and the result then
- * stays on screen for RESULT_LOOK_MS. The timings are those in shared/pacing.ts, which the browser plays.
+ * The pause after a showdown, worked out in one place. It starts when the showdown is sent to the clients.
+ * They first show the board cards they have not shown yet (`boardCards`), then play the drumroll and the
+ * spotlight for every hand in turn (`hands`, the viewer's own included), then light the winners of each
+ * pot (`pots`, side pots first and the main pot last), and the result stays on screen for RESULT_LOOK_MS.
+ * The timings are those in shared/pacing.ts, which the browser plays.
  */
 export function showdownPlan(boardCards: number, hands: number, pots = 1): { firstPotMs: number; totalMs: number } {
-  const reveal = streetRevealMs(boardCards) + handsRevealMs(hands) + PACING.afterHandsMs;
+  const reveal = streetRevealMs(boardCards) + spotlightSequenceMs(hands);
   return { firstPotMs: reveal, totalMs: reveal + Math.max(0, pots - 1) * POT_STEP_MS + RESULT_LOOK_MS };
 }
 
@@ -814,11 +815,12 @@ export class Table {
     // What the clients have not shown yet: a river that was dealt in this same step, and the hands.
     const boardCards = eng.board.length - this.boardSent;
     this.phase = 'showdown';
-    const flipped = this.revealAll(true);
+    this.revealAll(true);
     this.settle();
     this.broadcast();
-    // The clients reveal the cards and flip the hands one by one before the first pot is lit.
-    const plan = showdownPlan(boardCards, flipped, this.result!.pots.length);
+    // The clients show the last board card, play the drumroll and spotlight every hand in turn, and only then
+    // is the first pot lit.
+    const plan = showdownPlan(boardCards, eng.live().length, this.result!.pots.length);
     this.setFlow(() => this.awardNextPot(), this.reveal(plan.firstPotMs));
   }
 
@@ -848,9 +850,18 @@ export class Table {
     this.result = {
       hand: this.handNo,
       showdown: outcome.showdown,
+      // Every hand that reached the showdown, in seat order. Each is shown with its best five cards.
+      shown: outcome.showdown
+        ? eng.live().map((hp) => ({
+            playerId: hp.id,
+            handName: outcome.hands[hp.id]!.name,
+            cards: outcome.hands[hp.id]!.cards.map((c) => ({ ...c })),
+          }))
+        : [],
       pots: outcome.pots.map((pot) => ({
         amount: pot.amount,
         winners: [...pot.winners],
+        shares: { ...pot.shares },
         handName: pot.handName,
         cards: pot.cards.map((c) => ({ ...c })),
         // Each winner's own best five: split pots can be won with different cards.

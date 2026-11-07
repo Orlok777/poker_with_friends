@@ -177,8 +177,13 @@ describe('playing hands', () => {
         cards: cards('AS AH 9H 9S KD'),
         // Each winner's own best five, so the table can light them in the winner's seat.
         hands: [{ playerId: winner.id, handName: 'Two pair, aces and nines', cards: cards('AS AH 9H 9S KD') }],
+        // What each winner gets, for the winner panel of a split pot.
+        shares: { [winner.id]: 20 },
       },
     ]);
+    // Every hand that reached showdown, for the spotlight: the winner's and the loser's.
+    expect(r.shown.map((h) => h.playerId).sort()).toEqual([winner.id, loser.id].sort());
+    expect(r.shown.find((h) => h.playerId === loser.id)?.handName).toBe('Pair of nines');
     expect(netOf(r, winner.id)).toBe(10);
     expect(netOf(r, loser.id)).toBe(-10);
     expect(winner.me(over).chips).toBe(1010);

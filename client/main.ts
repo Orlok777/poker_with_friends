@@ -4,7 +4,7 @@ import { initBorrow, renderBorrow } from './borrow.js';
 import { clearBusy, initControls, renderControls } from './controls.js';
 import { $, storageGet, storageSet } from './dom.js';
 import { hydrateIcons, icon } from './icons.js';
-import { initPanels, renderLog, renderRules, resetPanels } from './panels.js';
+import { initPanels, renderRules, resetPanels } from './panels.js';
 import { syncNextState } from './reveal.js';
 import { isMuted, setMuted, unlockAudio } from './sound.js';
 import { renderTable, resetTable } from './table.js';
@@ -270,7 +270,6 @@ function render(): void {
     showScreen('table');
     renderControls();
     renderTable(s, self);
-    renderLog(s);
     renderRules(s);
   }
   renderBorrow(s, self);

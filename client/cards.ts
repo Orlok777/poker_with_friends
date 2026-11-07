@@ -102,14 +102,17 @@ export function runCardAnimations(): void {
   for (const el of flip) flipOver(el);
 }
 
-/** A card turns from its back to its face: the back turns edge-on, then the face turns up. One flip is PACING.flipMs. */
-function flipOver(el: HTMLElement): void {
+/**
+ * A card turns from its back to its face: the back turns edge-on, then the face turns up. One flip is
+ * PACING.flipMs, starting after `delay` ms; until then the card shows its back.
+ */
+export function flipOver(el: HTMLElement, delay = 0): void {
   const half = PACING.flipMs / 2;
   const cover = h('span', 'flip-cover');
   el.append(cover);
   const first = el.animate(
     [{ transform: 'perspective(600px) rotateY(0deg)' }, { transform: 'perspective(600px) rotateY(90deg)' }],
-    { duration: half, easing: 'ease-in', fill: 'forwards' },
+    { duration: half, delay, easing: 'ease-in', fill: 'forwards' },
   );
   const done = () => {
     first.cancel();

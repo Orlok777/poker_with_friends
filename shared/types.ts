@@ -175,6 +175,8 @@ export interface PotResultView {
   cards: Card[];
   /** Each winner's own best five cards, in the same order as `winners`; empty after a fold win. */
   hands: WinningHand[];
+  /** What each winner gets from this pot (they differ by the odd chip in a split pot). */
+  shares: Record<string, number>;
 }
 
 /**
@@ -194,6 +196,8 @@ export interface NetResult {
 export interface HandResult {
   hand: number;
   showdown: boolean;
+  /** Every hand that reached the showdown with its best five cards, in seat order; empty after a fold win. */
+  shown: WinningHand[];
   pots: PotResultView[];
   players: NetResult[];
 }

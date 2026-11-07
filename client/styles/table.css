@@ -449,17 +449,30 @@
   gap: 8px;
 }
 
+/* The winner panel: a line for every pot that has been awarded, side pots first and the main pot last. */
 .banner {
-  max-width: min(520px, 80vw);
+  display: grid;
+  gap: 4px;
+  max-width: min(560px, 86vw);
   margin: 0;
-  padding: 8px 16px;
+  padding: 9px 18px;
   font-size: var(--fs-md);
   font-weight: 700;
   text-align: center;
   color: var(--accent-ink);
   background: var(--accent);
-  border-radius: var(--r-pill);
+  border-radius: var(--r-md);
   box-shadow: var(--shadow-2);
+}
+
+.banner-line {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.banner-line + .banner-line {
+  padding-top: 4px;
+  border-top: 1px solid rgba(38, 26, 0, 0.18);
 }
 
 /* ------------------------------------------------------------------ cards */
@@ -590,6 +603,109 @@
 
 .card.dim-card {
   opacity: 0.45;
+}
+
+/* ------------------------------------------------------------ showdown spotlight */
+
+/* The layer the flying cards live in: above the page, never in the way of a click. */
+.spotlight-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* One card on its way between its seat and the spot above the board. Its place is the spot; the flight is a
+   transform from the seat's rectangle, measured when the flight starts. */
+.spot-mover {
+  position: fixed;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.spot-mover .card {
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.35),
+    0 14px 34px rgba(0, 0, 0, 0.5);
+}
+
+/* The name and the hand name, under the two cards. */
+.spot-label {
+  position: fixed;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0 10px;
+  text-align: center;
+  line-height: 1.2;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
+}
+
+.spot-name {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.spot-hand {
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* The seat whose cards are in the spotlight stays lit for the whole turn. */
+.plate.spot .plate-box,
+.my-spot.spot .me-info {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 26px rgba(245, 185, 66, 0.3);
+}
+
+/* The table's faint rules line sits where the name goes, so it steps aside for the spotlight. */
+.felt.spotlit .felt-rules {
+  opacity: 0;
+}
+
+/* The cards are away: the seat keeps their place, so nothing moves when they come back. */
+.hand-box.flown .card {
+  visibility: hidden;
+}
+
+/* The drumroll: the felt pulses once or twice, in time with nothing in particular, so it is felt as well as heard. */
+.felt.drumming {
+  animation: drumroll 1000ms ease-in both;
+}
+
+@keyframes drumroll {
+  0% {
+    filter: brightness(1);
+  }
+  60% {
+    filter: brightness(0.86);
+  }
+  100% {
+    filter: brightness(0.74);
+  }
+}
+
+@media (max-width: 599px) {
+  .spot-name {
+    font-size: var(--fs-md);
+  }
+  .spot-hand {
+    font-size: var(--fs-sm);
+    flex-basis: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .felt.drumming {
+    animation: none;
+  }
 }
 
 /* The back of a card while it turns over: it covers the face until the card is edge-on. */

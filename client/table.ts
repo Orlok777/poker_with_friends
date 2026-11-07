@@ -7,7 +7,9 @@ import { openBorrowPrompt } from './borrow.js';
 import { cardKey, chipStack, flyChips, handEl, resetCardMemory, ringEl, runCardAnimations, tickRings } from './cards.js';
 import { $, fmt, fmtSigned, h, prefersReducedMotion } from './dom.js';
 import { icon } from './icons.js';
-import { ingest, onReveal, resetReveal, view } from './reveal.js';
+import { renderLog } from './panels.js';
+import { awayIds, holdNow, ingest, onReveal, resetReveal, spotlightActive, view } from './reveal.js';
+import './spotlight.js';
 import { playAllIn, playChip, playDeal, playFlip, playKnock, playLose, playPayout, playShuffle, playWin } from './sound.js';
 
 let firstRender = true;
@@ -60,23 +62,36 @@ function inSentence(name: string): string {
   return /^(pair|straight|flush|full house|royal)/.test(lower) ? `a ${lower}` : lower;
 }
 
-/** "Alex wins 240 with a flush, ace high", or "Alex and Sam split 240 with ...". Empty until the first pot is lit. */
-function bannerText(s: TableState): string {
-  const r = s.result;
-  if (!r || r.pots.length === 0) return '';
-  const i = lastPushedPot(r.pots.length, s.potsAwarded);
-  if (i < 0) return '';
+/**
+ * One line of the winner panel for a pot: "Alex wins 240 with a flush, ace high", or for a split pot
+ * "Alex and Sam split 241 with a straight, ten high" followed by what each of them gets.
+ */
+function potLine(s: TableState, i: number): string {
+  const r = s.result!;
   const pot = r.pots[i]!;
   if (!r.showdown) return `${namesOf(s, pot.winners)} wins ${fmt(r.pots.reduce((sum, p) => sum + p.amount, 0))}`;
   const which = r.pots.length === 1 ? '' : i === 0 ? ' the main pot' : ` side pot ${i}`;
   const verb = pot.winners.length === 1 ? 'wins' : 'split';
   const how = pot.handName ? ` with ${inSentence(pot.handName)}` : '';
-  return `${namesOf(s, pot.winners)} ${verb}${which} ${fmt(pot.amount)}${how}`;
+  const each =
+    pot.winners.length > 1
+      ? ` (${pot.winners.map((id) => `${s.players.find((p) => p.id === id)?.name ?? 'A player'} ${fmt(pot.shares[id] ?? 0)}`).join(', ')})`
+      : '';
+  return `${namesOf(s, pot.winners)} ${verb}${which} ${fmt(pot.amount)}${how}${each}`;
+}
+
+/** The winner panel: a line for every pot lit so far, side pots first and the main pot last. Empty before the first. */
+function panelLines(s: TableState): string[] {
+  const r = s.result;
+  if (!r || r.pots.length === 0 || s.potsAwarded <= 0) return [];
+  const lines: string[] = [];
+  for (let i = r.pots.length - 1; i >= lastPushedPot(r.pots.length, s.potsAwarded); i--) lines.push(potLine(s, i));
+  return lines;
 }
 
 function pillText(s: TableState, self: PlayerView): { text: string; tone: '' | 'accent' } {
   if (s.phase === 'waiting') return { text: 'Waiting for players', tone: '' };
-  if (s.phase === 'showdown' || s.phase === 'hand_over') return { text: '', tone: '' };
+  if (s.phase === 'showdown' || s.phase === 'hand_over') return { text: spotlightActive() ? 'Showdown' : '', tone: '' };
   if (s.turn === self.id) return { text: 'Your turn', tone: 'accent' };
   const p = s.players.find((x) => x.id === s.turn);
   if (p) return { text: `${p.name} to act`, tone: '' };
@@ -89,6 +104,9 @@ function pillText(s: TableState, self: PlayerView): { text: string; tone: '' | '
 }
 
 // ------------------------------------------------------------------- plates
+
+/** Players whose cards are in the showdown spotlight right now, flying to it or back (set by renderTable). */
+let away: ReadonlySet<string> = new Set();
 
 /** The pot being lit right now: who won it and which five cards each of them wins with. */
 interface Spotlight {
@@ -112,9 +130,9 @@ function spotlight(s: TableState): Spotlight | null {
   return { winners: new Set(pot.winners), fives, board, showdown: r.showdown };
 }
 
-/** Lifts and lights the cards in `lit` and dims the rest of the row. Nothing changes without a spotlight. */
-function markCards(row: HTMLElement, spot: Spotlight | null, lit: Set<string> | undefined): void {
-  if (!spot?.showdown) return;
+/** Lifts and lights the cards in `lit` and dims the rest of the row, when `active`. */
+function markCards(row: HTMLElement, active: boolean, lit: Set<string> | undefined): void {
+  if (!active) return;
   for (const el of row.querySelectorAll<HTMLElement>('.card')) {
     const key = el.dataset.card;
     if (key === undefined) continue; // a face-down card
@@ -192,6 +210,7 @@ function plateEl(s: TableState, p: PlayerView, counts: Counts, spot: Spotlight |
   if (!p.inHand) plate.classList.add('idle');
   if (hasWon(spot, p.id)) plate.classList.add('winner');
   else if (hasLost(s, spot, p)) plate.classList.add('lost');
+  if (away.has(p.id)) plate.classList.add('spot');
 
   const box = h('div', 'plate-box');
   const head = h('div', 'plate-head');
@@ -231,10 +250,12 @@ function plateEl(s: TableState, p: PlayerView, counts: Counts, spot: Spotlight |
   const { el, added, flipped } = handEl(`seat:${p.id}`, p.cards, !firstRender);
   counts.added += added;
   counts.flipped += flipped;
-  markCards(el, spot, spot?.fives.get(p.id));
+  markCards(el, !!spot?.showdown, spot?.fives.get(p.id));
   hand.append(el);
   if (p.cards.length === 0) hand.classList.add('empty');
   else if (p.cards.some((c) => !isHiddenCard(c))) hand.classList.add('face-up');
+  // The cards are in the spotlight: the seat keeps their place, but they are not drawn.
+  if (away.has(p.id)) hand.classList.add('flown');
   plate.append(hand);
   return plate;
 }
@@ -290,7 +311,9 @@ function renderCenter(s: TableState, self: PlayerView, counts: Counts, spot: Spo
   // Board cards flip over one at a time as the table reveals them.
   const { el, added } = handEl('board', s.board, !firstRender, true);
   counts.added += added;
-  markCards(el, spot, spot?.board);
+  // The board is lit for the pot's winners, or for the player held in the spotlight.
+  const held = holdNow();
+  markCards(el, !!spot?.showdown || held !== null, held ? held.five : spot?.board);
   // Five slots, so the board does not jump as cards arrive.
   const slots = h('div', 'board-slots');
   for (let i = s.board.length; i < 5; i++) slots.append(h('span', 'slot'));
@@ -317,17 +340,24 @@ function renderCenter(s: TableState, self: PlayerView, counts: Counts, spot: Spo
   pill.className = `phase-pill ${phase.tone}`.trim();
   pill.hidden = phase.text === '';
 
+  // The winner panel: one line per pot lit so far. It is only redrawn when its text changes, so it does not flash.
   const banner = $('banner');
-  const text = s.phase === 'showdown' || s.phase === 'hand_over' ? bannerText(s) : '';
-  if (banner.textContent !== text) {
-    banner.textContent = text;
-    if (text && !firstRender) {
-      // At showdown the banner follows the glow a moment later; after a fold win it comes at once.
-      const frames = prefersReducedMotion() ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: 'scale(0.9)' }, { opacity: 1, transform: 'none' }];
-      banner.animate(frames, { duration: 260, delay: s.result?.showdown ? CELEBRATE_MS : 0, fill: 'backwards' });
+  const lines = s.phase === 'showdown' || s.phase === 'hand_over' ? panelLines(s) : [];
+  const text = lines.join('\n');
+  if (banner.dataset.text !== text) {
+    const had = banner.children.length;
+    banner.dataset.text = text;
+    banner.replaceChildren(...lines.map((line) => h('p', 'banner-line', line)));
+    if (lines.length > 0 && !firstRender) {
+      // At showdown the panel follows the glow a moment later; after a fold win it comes at once. The panel
+      // as a whole appears with its first line; after that only the new line fades in.
+      const delay = s.result?.showdown ? CELEBRATE_MS : 0;
+      const frames = prefersReducedMotion() ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: 'scale(0.94)' }, { opacity: 1, transform: 'none' }];
+      const fresh = had === 0 || had >= lines.length ? banner : banner.lastElementChild;
+      fresh?.animate(frames, { duration: 260, delay, fill: 'backwards' });
     }
   }
-  banner.hidden = text === '';
+  banner.hidden = lines.length === 0;
   $('felt-rules').textContent = rulesText(s.settings);
 }
 
@@ -349,6 +379,7 @@ function renderMe(s: TableState, self: PlayerView, counts: Counts, lit: Spotligh
   spot.classList.toggle('folded', self.folded);
   spot.classList.toggle('winner', hasWon(lit, self.id));
   spot.classList.toggle('lost', !hasWon(lit, self.id) && hasLost(s, lit, self));
+  spot.classList.toggle('spot', away.has(self.id));
 
   // My chips in front of me sit on the felt, above my cards.
   const myBet = $('my-bet');
@@ -411,9 +442,10 @@ function renderMe(s: TableState, self: PlayerView, counts: Counts, lit: Spotligh
   const mine = s.you?.cards ?? [];
   const { el, added } = handEl('me', mine, !firstRender);
   counts.added += added;
-  markCards(el, lit, lit?.fives.get(self.id));
+  markCards(el, !!lit?.showdown, lit?.fives.get(self.id));
   box.append(el);
   if (mine.length === 0) box.classList.add('empty');
+  if (away.has(self.id)) box.classList.add('flown');
 
   spot.replaceChildren(info, box);
 }
@@ -486,6 +518,7 @@ export function renderTable(real: TableState, self: PlayerView): void {
     timerTotal = s.deadline ? Math.max(1, s.deadline - s.serverNow) : 1;
   }
   const spot = spotlight(s);
+  away = awayIds();
   const pushed = !!prev && prev.hand === s.hand && s.potsAwarded > prev.potsAwarded;
   // Where the pot that is about to leave sits now; it is gone from the felt once the table is drawn again.
   const from = pushed ? ($('pots').lastElementChild ?? $('pots')).getBoundingClientRect() : null;
@@ -494,6 +527,8 @@ export function renderTable(real: TableState, self: PlayerView): void {
   renderOpponents(s, self, counts, spot);
   renderMe(s, self, counts, spot);
   $('felt').classList.toggle('show-results', !!spot?.showdown);
+  // The log follows the table: it never gets ahead of the cards and pots that are on screen.
+  renderLog(s);
 
   runCardAnimations();
   playChanges(s, prev, counts);

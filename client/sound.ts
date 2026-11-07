@@ -181,6 +181,45 @@ export function playKnock(): void {
   }
 }
 
+/**
+ * The drumroll before the showdown spotlight: a snare-like roll of short noise bursts that speeds up and
+ * gets louder over `seconds`, ending on one accent hit. Generated in code, like the knock and the jingles.
+ * Silent when muted.
+ */
+export function playDrumroll(seconds = 1): void {
+  const c = audio();
+  if (!c || !master) return;
+  const noise = c.createBuffer(1, Math.floor(c.sampleRate * 0.12), c.sampleRate);
+  const data = noise.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  const hit = (start: number, peak: number, length: number) => {
+    const t = c.currentTime + start;
+    const src = c.createBufferSource();
+    src.buffer = noise;
+    const band = c.createBiquadFilter();
+    band.type = 'bandpass';
+    band.frequency.value = 1800;
+    band.Q.value = 0.8;
+    const gain = c.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(peak, t + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
+    src.connect(band).connect(gain).connect(master!);
+    src.start(t);
+    src.stop(t + length + 0.02);
+  };
+  // The hits come closer together towards the end, and each is louder than the last.
+  const hits = Math.max(8, Math.round(seconds * 26));
+  for (let i = 0; i < hits; i++) {
+    const f = i / hits;
+    hit((seconds - 0.12) * Math.pow(f, 0.75), 0.07 + 0.25 * f, 0.07);
+  }
+  // The accent: a low thump with a crack, just as the first cards start to fly.
+  const t = seconds - 0.08;
+  hit(t, 0.5, 0.18);
+  tone(c, 110, t, 0.22, 'sine', 0.45);
+}
+
 /** A short rising chime, played when I win a hand. Generated in code: the pack has no jingles. */
 export function playWin(): void {
   const c = audio();
