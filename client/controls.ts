@@ -115,7 +115,7 @@ const KEYS: Record<string, ['fold' | 'call' | 'raise', string]> = {
 };
 
 function onKey(ev: KeyboardEvent): void {
-  const target = ev.target as HTMLElement | null;
+  const target = ev.target instanceof HTMLElement ? ev.target : null;
   // Pressing any other key cancels a pending all in.
   if (allInArmed && !target?.closest('#allin-btn')) disarmAllIn();
   if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
