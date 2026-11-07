@@ -1,8 +1,8 @@
 {
-  "name": "blackjack-with-friends",
+  "name": "poker-with-friends",
   "version": "1.0.0",
   "private": true,
-  "description": "Multiplayer blackjack for a group of friends, played for fake chips",
+  "description": "Multiplayer No-Limit Texas Hold'em for a group of friends, played for fake chips",
   "type": "module",
   "engines": {
     "node": ">=20"
