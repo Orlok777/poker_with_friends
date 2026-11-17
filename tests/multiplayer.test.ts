@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Card, ServerMsg, TableState } from '../shared/types.js';
@@ -272,6 +272,8 @@ describe('host and settings', () => {
       { maxPlayers: 10 },
       { startingChips: 99 },
       { turnSeconds: 5 },
+      { allowBorrowing: 'yes' },
+      { allowBorrowing: null },
     ];
     for (const settings of bad) {
       expect((await alex.expectError({ type: 'update_settings', settings: settings as never })).code).toBe('invalid_settings');
@@ -279,6 +281,26 @@ describe('host and settings', () => {
     expect((await bob.expectError({ type: 'start_game' })).code).toBe('not_host');
     expect(alex.state!.settings).toMatchObject({ smallBlind: 5, bigBlind: 10, maxPlayers: 6, startingChips: 1000 });
     expect(alex.state!.started).toBe(false);
+  });
+
+  it('allows borrowing by default, lets the host switch it off, and locks it at the start', async () => {
+    const { alex } = await twoPlayers();
+    expect(alex.state!.settings.allowBorrowing).toBe(true);
+    alex.send({ type: 'update_settings', settings: { allowBorrowing: false } });
+    await alex.waitForState((s) => s.settings.allowBorrowing === false);
+    alex.send({ type: 'start_game' });
+    await alex.waitForState((s) => s.started);
+    expect((await alex.expectError({ type: 'update_settings', settings: { allowBorrowing: true } })).code).toBe('settings_locked');
+    expect(alex.state!.settings.allowBorrowing).toBe(false);
+  });
+
+  it('refuses borrowing when it is switched off', async () => {
+    const { alex } = await twoPlayers();
+    alex.send({ type: 'update_settings', settings: { allowBorrowing: false } });
+    await alex.waitForState((s) => s.settings.allowBorrowing === false);
+    alex.send({ type: 'start_game' });
+    await alex.waitForState((s) => s.started);
+    expect((await alex.expectError({ type: 'borrow' })).code).toBe('borrowing_off');
   });
 
   it('needs two ready players before the host can start', async () => {
@@ -444,7 +466,7 @@ describe('rejected messages', () => {
     expect((await first.expectError({ type: 'action', action: 'raise', amount: -50 })).code).toBe('bad_amount');
     expect((await first.expectError({ type: 'action', action: 'raise' })).code).toBe('bad_amount');
     expect((await first.expectError({ type: 'reset_chips' })).code).toBe('cannot_reset');
-    expect((await first.expectError({ type: 'pay_back' })).code).toBe('cannot_pay_back');
+    expect((await first.expectError({ type: 'withdraw', amount: 10 })).code).toBe('cannot_withdraw');
     expect((await first.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
     expect((await bob.expectError({ type: 'update_settings', settings: { bigBlind: 20 } })).code).toBe('not_host');
     expect((await alex.expectError({ type: 'update_settings', settings: { bigBlind: 20 } })).code).toBe('settings_locked');
@@ -617,8 +639,8 @@ describe('chips and usernames', () => {
     const winnerName = winner.me(over).name;
     const loserName = winnerName === 'Alex' ? 'Bob' : 'Alex';
     expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))).toEqual({
-      [winnerName]: { chips: 1010, earnings: 10 },
-      [loserName]: { chips: 990, earnings: -10 },
+      [winnerName]: 1010,
+      [loserName]: 990,
     });
     expect(existsSync(join(first.dataDir, 'players.json.tmp'))).toBe(false);
 
@@ -634,7 +656,7 @@ describe('chips and usernames', () => {
     await back.join(winnerName.toUpperCase()); // same name, other case
     expect(back.me().name).toBe(winnerName);
     expect(back.me().chips).toBe(1010);
-    expect(back.me().earnings).toBe(10);
+    expect(back.me().earnings).toBe(0); // winning a hand is not earnings
 
     const newcomer = await h.client(second.srv);
     await newcomer.join('Newbie');
@@ -647,7 +669,7 @@ describe('chips and usernames', () => {
   });
 });
 
-describe('borrowing and paying back', () => {
+describe('borrowing and withdrawing', () => {
   it('lets a player who lost everything borrow a buy-in, keeps the debt across a restart and pays it back', async () => {
     // The big blind gets aces and wins; the button goes all in and loses everything.
     const rigged = [headsUp('AS AH', '2D 7C', '9H 9S KD 4C 3H')];
@@ -673,7 +695,7 @@ describe('borrowing and paying back', () => {
     await loser.waitForState((st) => st.phase === 'showdown');
     expect((await loser.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
     const lost = await loser.waitForState((st) => st.phase === 'hand_over');
-    expect(loser.me(lost)).toMatchObject({ chips: 0, debt: 0, earnings: -1000 });
+    expect(loser.me(lost)).toMatchObject({ chips: 0, debt: 0, earnings: 0 });
     // Only one player has chips, so the table waits.
     const waiting = await loser.waitForState((st) => st.phase === 'waiting');
     expect(loser.me(waiting).chips).toBe(0);
@@ -681,7 +703,7 @@ describe('borrowing and paying back', () => {
     loser.send({ type: 'borrow' });
     const borrowed = await loser.waitForState((st) => loser.me(st).debt === 1000);
     expect(loser.me(borrowed).chips + loser.me(borrowed).bet).toBe(1000);
-    expect(loser.me(borrowed).earnings).toBe(-1000); // borrowing is not a win
+    expect(loser.me(borrowed).earnings).toBe(-1000); // the loan counts against the earnings
     expect(borrowed.log.some((e) => e.text === `${name} borrows 1,000 and now owes 1,000`)).toBe(true);
     expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))[name]).toEqual({
       chips: 1000,
@@ -689,9 +711,9 @@ describe('borrowing and paying back', () => {
       earnings: -1000,
     });
 
-    // Borrowing let a new hand start, and paying back must wait until the player is out of it.
+    // Borrowing let a new hand start, and withdrawing must wait until the player is out of it.
     await loser.waitForState((st) => st.phase === 'preflop' && st.hand === 2);
-    expect((await loser.expectError({ type: 'pay_back' })).code).toBe('cannot_pay_back');
+    expect((await loser.expectError({ type: 'withdraw', amount: 10 })).code).toBe('cannot_withdraw');
     expect((await loser.expectError({ type: 'borrow' })).code).toBe('cannot_borrow');
 
     // The tab survives a restart.
@@ -701,12 +723,12 @@ describe('borrowing and paying back', () => {
     await back.join(name);
     expect(back.me()).toMatchObject({ chips: 1000, debt: 1000, earnings: -1000 });
 
-    // Paying back takes the chips and leaves the earnings alone.
-    back.send({ type: 'pay_back' });
+    // Withdrawing the chips pays the loan off; nothing was won, so the earnings end at zero.
+    back.send({ type: 'withdraw', amount: 1000 });
     const paid = await back.waitForState((st) => back.me(st).debt === 0);
-    expect(back.me(paid)).toMatchObject({ chips: 0, debt: 0, earnings: -1000 });
-    expect(paid.log.some((e) => e.text === `${name} pays back 1,000 and owes nothing`)).toBe(true);
-    expect((await back.expectError({ type: 'pay_back' })).code).toBe('cannot_pay_back');
+    expect(back.me(paid)).toMatchObject({ chips: 0, debt: 0, earnings: 0 });
+    expect(paid.log.some((e) => e.text === `${name} withdraws 1,000 and pays off 1,000 of their debt`)).toBe(true);
+    expect((await back.expectError({ type: 'withdraw', amount: 1 })).code).toBe('bad_amount');
 
     // Resetting chips wipes the earnings too.
     back.send({ type: 'reset_chips' });
@@ -715,6 +737,86 @@ describe('borrowing and paying back', () => {
     expect(JSON.parse(readFileSync(join(first.dataDir, 'players.json'), 'utf8'))[name]).toBe(1000);
   });
 });
+
+/** Boots a server whose saved players are `saved`, with Alex (the host) joined and not ready. */
+async function withSavedPlayers(saved: Record<string, unknown>) {
+  const first = await h.boot();
+  await first.srv.close();
+  writeFileSync(join(first.dataDir, 'players.json'), JSON.stringify(saved));
+  const { srv, dataDir } = await h.boot({}, first.dataDir);
+  const alex = await h.client(srv);
+  await alex.join('Alex', { hostToken: srv.hostToken });
+  return { srv, dataDir, alex };
+}
+
+const saved = (dataDir: string, name: string) => JSON.parse(readFileSync(join(dataDir, 'players.json'), 'utf8'))[name];
+
+describe('withdrawing', () => {
+  it('pays the debt first and keeps the rest as earnings', async () => {
+    const { dataDir, alex } = await withSavedPlayers({ Alex: { chips: 3000, debt: 1000, earnings: -1000 } });
+    expect(alex.me()).toMatchObject({ chips: 3000, debt: 1000, earnings: -1000 });
+    alex.send({ type: 'withdraw', amount: 1500 });
+    const after = await alex.waitForState((s) => alex.me(s).chips === 1500);
+    expect(alex.me(after)).toMatchObject({ chips: 1500, debt: 0, earnings: 500 });
+    expect(after.log.some((e) => e.text === 'Alex withdraws 1,500 and pays off 1,000 of their debt')).toBe(true);
+    expect(saved(dataDir, 'Alex')).toEqual({ chips: 1500, earnings: 500 });
+  });
+
+  it('leaves a smaller debt standing when the amount does not cover it', async () => {
+    const { alex } = await withSavedPlayers({ Alex: { chips: 3000, debt: 1000, earnings: -1000 } });
+    alex.send({ type: 'withdraw', amount: 400 });
+    const after = await alex.waitForState((s) => alex.me(s).chips === 2600);
+    expect(alex.me(after)).toMatchObject({ debt: 600, earnings: -600 });
+    expect(after.log.some((e) => e.text === 'Alex withdraws 400 and still owes 600')).toBe(true);
+  });
+
+  it('is a plain cash-out when there is no debt, and can take every chip', async () => {
+    const { alex } = await withSavedPlayers({ Alex: 1000 });
+    alex.send({ type: 'withdraw', amount: 500 });
+    const half = await alex.waitForState((s) => alex.me(s).chips === 500);
+    expect(alex.me(half)).toMatchObject({ debt: 0, earnings: 500 });
+    expect(half.log.some((e) => e.text === 'Alex withdraws 500')).toBe(true);
+    alex.send({ type: 'withdraw', amount: 500 });
+    const none = await alex.waitForState((s) => alex.me(s).chips === 0);
+    expect(alex.me(none)).toMatchObject({ debt: 0, earnings: 1000 });
+  });
+
+  it('refuses amounts that are not a whole number from 1 to the chips', async () => {
+    const { alex } = await withSavedPlayers({ Alex: 1000 });
+    for (const amount of [0, -5, 12.5, '50' as never, 1001, undefined as never]) {
+      expect((await alex.expectError({ type: 'withdraw', amount })).code).toBe('bad_amount');
+    }
+    expect(alex.me()).toMatchObject({ chips: 1000, earnings: 0 });
+  });
+
+  it('is refused in the middle of a hand and for a spectator', async () => {
+    const { srv, clients } = await players(['Alex', 'Bob']);
+    const [alex] = clients as [TestClient, TestClient];
+    alex.send({ type: 'update_settings', settings: { maxPlayers: 2 } });
+    await alex.waitForState((s) => s.settings.maxPlayers === 2);
+    alex.send({ type: 'start_game' });
+    await alex.waitForState((s) => s.turn !== null);
+    expect((await alex.expectError({ type: 'withdraw', amount: 10 })).code).toBe('cannot_withdraw');
+    const watcher = await h.client(srv);
+    await watcher.join('Watcher');
+    expect(watcher.me().seat).toBeNull();
+    expect((await watcher.expectError({ type: 'withdraw', amount: 10 })).code).toBe('cannot_withdraw');
+    expect(watcher.me()).toMatchObject({ chips: 1000, earnings: 0 });
+  });
+
+  it('keeps earnings at minus the debt plus everything withdrawn, whatever the amounts', async () => {
+    const { alex } = await withSavedPlayers({ Alex: { chips: 3000, debt: 1000, earnings: -1000 } });
+    let withdrawn = 0;
+    for (const amount of [300, 900, 1, 1799]) {
+      alex.send({ type: 'withdraw', amount });
+      withdrawn += amount;
+      const s = await alex.waitForState((st) => alex.me(st).chips === 3000 - withdrawn);
+      expect(alex.me(s).earnings).toBe(-1000 + withdrawn);
+    }
+    expect(alex.me()).toMatchObject({ chips: 0, debt: 0, earnings: 2000 });
+  });
+});
+
 
 describe('closing the game', () => {
   it('ends the game when the last player leaves, and only the host link can create a new one', async () => {

@@ -10,6 +10,7 @@ import { icon } from './icons.js';
 type Field =
   | { kind: 'int'; key: keyof Settings; label: string; min?: number; max?: number; unit?: string }
   | { kind: 'segment'; key: keyof Settings; label: string; options: [string, string][] }
+  | { kind: 'switch'; key: 'allowBorrowing'; label: string }
   | { kind: 'password'; key: 'password'; label: string }
   | { kind: 'turn'; key: 'turnSeconds'; label: string };
 
@@ -19,6 +20,7 @@ const GROUPS: { title: string; fields: Field[] }[] = [
     fields: [
       { kind: 'int', key: 'maxPlayers', label: 'Max players', ...SETTINGS_LIMITS.maxPlayers },
       { kind: 'int', key: 'startingChips', label: 'Starting chips', ...SETTINGS_LIMITS.startingChips },
+      { kind: 'switch', key: 'allowBorrowing', label: 'Allow borrowing' },
       { kind: 'password', key: 'password', label: 'Password' },
     ],
   },
@@ -108,6 +110,12 @@ function buildField(f: Field): HTMLElement {
     const seg = segmented(f.label, f.options, (v) => sendSetting({ [f.key]: v } as Partial<Settings>));
     holder.append(seg.el);
     controls.push({ sync: (s, editable) => seg.set(String(s[f.key as keyof PublicSettings]), editable) });
+  } else if (f.kind === 'switch') {
+    label.removeAttribute('for');
+    label.id = id;
+    const seg = segmented(f.label, [['on', 'On'], ['off', 'Off']], (v) => sendSetting({ allowBorrowing: v === 'on' }));
+    holder.append(seg.el);
+    controls.push({ sync: (s, editable) => seg.set(s.allowBorrowing ? 'on' : 'off', editable) });
   } else if (f.kind === 'password') {
     const inp = h('input', 'text-input');
     inp.id = id;
@@ -189,7 +197,6 @@ export function initWaiting(): void {
   });
   $('start-btn').addEventListener('click', () => send({ type: 'start_game' }));
   $('reset-btn-wait').addEventListener('click', resetChips);
-  $('payback-btn-wait').addEventListener('click', () => send({ type: 'pay_back' }));
   $('share-btn').addEventListener('click', () => void shareLink());
   $('share-copy').addEventListener('click', () => void copyShareLink());
   $<HTMLInputElement>('share-link').addEventListener('focus', (e) => (e.target as HTMLInputElement).select());
@@ -275,10 +282,6 @@ export function renderWaiting(s: TableState, self: PlayerView): void {
   $('player-count').textContent = `${s.players.length} / ${s.settings.maxPlayers}`;
 
   $('player-list').replaceChildren(...s.players.map((p) => playerRow(s, p, host)));
-
-  const canPay = self.debt > 0 && self.chips > 0;
-  $('payback-btn-wait').hidden = !canPay;
-  if (canPay) $('payback-label').textContent = `Pay back ${fmt(Math.min(self.chips, self.debt))}`;
 
   const ready = $<HTMLButtonElement>('ready-btn');
   ready.replaceChildren(icon('check'), self.ready ? 'Ready' : "I'm ready");

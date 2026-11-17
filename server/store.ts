@@ -7,7 +7,7 @@ interface Entry {
   chips: number;
   /** Chips borrowed to buy back in and not paid back. Zero for most players. */
   debt: number;
-  /** Running profit or loss from the cards. Can be negative. Borrowing and paying back do not change it. */
+  /** Money withdrawn minus money borrowed. Can be negative. Winning or losing hands does not change it. */
   earnings: number;
 }
 

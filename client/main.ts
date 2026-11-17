@@ -1,6 +1,7 @@
 import type { ClientMsg, ServerMsg } from '../shared/types.js';
 import { app, me, send, toast } from './app.js';
 import { initBorrow, renderBorrow } from './borrow.js';
+import { initWithdraw, renderWithdraw, withdrawFailed } from './withdraw.js';
 import { clearBusy, initControls, renderControls } from './controls.js';
 import { $, storageGet, storageSet } from './dom.js';
 import { hydrateIcons, icon } from './icons.js';
@@ -184,6 +185,7 @@ function handleError(code: string, message: string): void {
     resyncSettings();
   }
   clearBusy();
+  withdrawFailed();
   renderControls();
   toast(message);
 }
@@ -273,6 +275,7 @@ function render(): void {
     renderRules(s);
   }
   renderBorrow(s, self);
+  renderWithdraw(s, self);
 }
 
 // --------------------------------------------------------------------- init
@@ -281,6 +284,7 @@ hydrateIcons();
 initWaiting();
 initControls();
 initBorrow();
+initWithdraw();
 initPanels();
 showScreen(null);
 connect();

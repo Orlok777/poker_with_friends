@@ -16,7 +16,7 @@ let returnFocus: Element | null = null;
 /** Seated with no chips, and not in a hand that is still being played. */
 function isOut(s: TableState, self: PlayerView): boolean {
   const live = self.inHand && s.phase !== 'hand_over' && s.phase !== 'waiting';
-  return s.started && self.seat !== null && self.chips === 0 && !live;
+  return s.settings.allowBorrowing && s.started && self.seat !== null && self.chips === 0 && !live;
 }
 
 function isOpen(): boolean {

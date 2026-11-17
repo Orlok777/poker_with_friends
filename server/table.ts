@@ -25,6 +25,7 @@ import {
   type YouView,
 } from '../shared/types.js';
 import { PACING, handsRevealMs, leadMs, spotlightSequenceMs, streetRevealMs } from '../shared/pacing.js';
+import { splitWithdrawal } from '../shared/withdraw.js';
 import { Deck, mulberry32, randomSeed } from './deck.js';
 import { HoldemHand, type HandOutcome } from './game.js';
 import { bestHand, inSentence } from './hand.js';
@@ -107,7 +108,7 @@ interface Player {
   chips: number;
   /** Borrowed chips not paid back. Saved with the chips. */
   debt: number;
-  /** Profit or loss from the cards, saved with the chips. Reset to 0 by Reset chips. */
+  /** Money withdrawn minus money borrowed, saved with the chips. Reset to 0 by Reset chips. */
   earnings: number;
   ready: boolean;
   seat: number | null;
@@ -269,8 +270,8 @@ export class Table {
         return this.onResetChips(conn, p);
       case 'borrow':
         return this.onBorrow(conn, p);
-      case 'pay_back':
-        return this.onPayBack(conn, p);
+      case 'withdraw':
+        return this.onWithdraw(conn, p, msg.amount);
       case 'kick_player':
         return this.onKick(conn, p, msg.playerId);
       default:
@@ -603,29 +604,35 @@ export class Table {
     this.maybeStartHand();
   }
 
-  /** Pays borrowed chips back out of the player's chips, as much as the chips allow. */
-  private onPayBack(conn: Connection, p: Player): void {
+  /** Takes chips off the table: they pay the player's debt first and the rest counts as profit in the earnings. */
+  private onWithdraw(conn: Connection, p: Player, amount: unknown): void {
     if (this.inLiveHand(p)) {
-      return this.sendError(conn, 'cannot_pay_back', 'You can pay back once you are not in a hand');
+      return this.sendError(conn, 'cannot_withdraw', 'You can withdraw once the hand is over');
     }
-    if (p.debt <= 0) return this.sendError(conn, 'cannot_pay_back', 'You do not owe anything');
-    if (p.chips <= 0) return this.sendError(conn, 'cannot_pay_back', 'You have no chips to pay back with');
-    const amount = Math.min(p.chips, p.debt);
+    if (this.started && p.seat === null) return this.sendError(conn, 'cannot_withdraw', 'You need a seat to withdraw');
+    if (typeof amount !== 'number' || !Number.isInteger(amount) || amount < 1 || amount > p.chips) {
+      return this.sendError(conn, 'bad_amount', 'Withdraw a whole number of chips, from 1 up to all of yours');
+    }
+    const { debtPaid } = splitWithdrawal(p.debt, amount);
     p.chips -= amount;
-    p.debt -= amount;
+    p.debt -= debtPaid;
+    p.earnings += amount;
     this.saveChips(p);
-    this.addLog(p.debt > 0 ? `${p.name} pays back ${n(amount)} and still owes ${n(p.debt)}` : `${p.name} pays back ${n(amount)} and owes nothing`);
+    const owed = p.debt > 0 ? ` and still owes ${n(p.debt)}` : debtPaid > 0 ? ` and pays off ${n(debtPaid)} of their debt` : '';
+    this.addLog(`${p.name} withdraws ${n(amount)}${owed}`);
     this.broadcast();
   }
 
   /** A seated player who is out of chips borrows a buy-in (the starting chips) and owes it. */
   private onBorrow(conn: Connection, p: Player): void {
+    if (!this.settings.allowBorrowing) return this.sendError(conn, 'borrowing_off', 'Borrowing is turned off at this table');
     if (p.seat === null) return this.sendError(conn, 'cannot_borrow', 'You need a seat to borrow chips');
     if (p.chips > 0) return this.sendError(conn, 'cannot_borrow', 'You can only borrow when you are out of chips');
     if (this.inLiveHand(p)) return this.sendError(conn, 'cannot_borrow', 'You can borrow once the hand is over');
     const amount = this.settings.startingChips;
     p.chips += amount;
     p.debt += amount;
+    p.earnings -= amount; // the loan counts against the earnings until it is paid off by withdrawing
     this.saveChips(p);
     this.addLog(`${p.name} borrows ${n(amount)} and now owes ${n(p.debt)}`);
     this.broadcast();
@@ -835,16 +842,12 @@ export class Table {
     this.setFlow(() => this.nextHand(), this.timing.foldWinMs);
   }
 
-  /** Pays out every pot, updates the chips and earnings and saves them. The pots are shown moving one at a time. */
+  /** Pays out every pot, updates the chips and saves them. The pots are shown moving one at a time. */
   private settle(): void {
     const eng = this.eng!;
     const outcome = eng.finish();
     this.outcome = outcome;
     this.syncChips();
-    for (const [id, net] of Object.entries(outcome.net)) {
-      const p = this.players.get(id);
-      if (p) p.earnings += net;
-    }
     for (const p of this.players.values()) this.store.set(p.name, p.chips, p.debt, p.earnings);
     this.store.save();
     this.result = {

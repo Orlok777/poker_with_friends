@@ -177,6 +177,7 @@ export function renderRules(s: TableState): void {
     ['Minimum bet', fmt(st.bigBlind)],
     ['Antes', 'None'],
     ['Starting chips', fmt(st.startingChips)],
+    ['Borrowing', st.allowBorrowing ? 'On' : 'Off'],
     ['Max players', String(st.maxPlayers)],
     ['Turn time', st.turnSeconds === null ? 'No limit' : `${st.turnSeconds} s`],
   ];

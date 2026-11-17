@@ -66,7 +66,7 @@
           <ul id="player-list" class="player-list"></ul>
           <div class="wait-actions">
             <button id="ready-btn" type="button" class="ready-btn big">I'm ready</button>
-            <button id="payback-btn-wait" type="button" class="ghost big" hidden><span data-icon="check"></span><span id="payback-label">Pay back</span></button>
+            <button id="withdraw-btn-wait" type="button" class="ghost big" hidden><span data-icon="check"></span>Withdraw</button>
             <button id="reset-btn-wait" type="button" class="ghost big"><span data-icon="reset"></span>Reset chips</button>
             <button id="share-btn" type="button" class="ghost big"><span data-icon="share"></span>Share</button>
           </div>
@@ -97,7 +97,13 @@
     <!-- Table -->
     <section id="screen-table" class="table-screen" hidden>
       <header class="app-bar table-bar">
-        <span id="round-label" class="round-label"></span>
+        <div class="bar-left">
+          <span id="round-label" class="round-label"></span>
+          <div id="bank" class="bank" hidden>
+            <span id="bank-earnings" class="bank-earnings"></span>
+            <button id="withdraw-btn" type="button" class="ghost bank-btn">Withdraw</button>
+          </div>
+        </div>
         <div class="icon-row">
           <button class="icon-btn mute-btn" type="button" aria-label="Mute sound" title="Mute sound"></button>
           <button id="rules-btn" class="icon-btn" type="button" aria-label="How to play and table rules" title="How to play" aria-expanded="false" aria-controls="guide-drawer" data-icon="rules"></button>
@@ -207,6 +213,24 @@
         <button id="kicked-back" type="button" class="big block">Back to start</button>
       </div>
     </section>
+
+    <div id="withdraw-scrim" class="modal-scrim" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="withdraw-title" aria-describedby="withdraw-text">
+        <div class="modal-badge" aria-hidden="true"><span class="chip-disc c500"></span></div>
+        <h2 id="withdraw-title">Withdraw chips</h2>
+        <p id="withdraw-text"></p>
+        <div class="withdraw-field">
+          <input id="withdraw-amount" class="num-input num" type="number" inputmode="numeric" min="1" step="1" aria-label="Amount to withdraw" />
+          <button id="withdraw-debt" type="button" class="ghost">Pay off debt</button>
+          <button id="withdraw-max" type="button" class="ghost">Max</button>
+        </div>
+        <p id="withdraw-preview" class="modal-tab"></p>
+        <div class="modal-actions">
+          <button id="withdraw-no" type="button" class="ghost big">Cancel</button>
+          <button id="withdraw-yes" type="button" class="primary big"></button>
+        </div>
+      </div>
+    </div>
 
     <div id="borrow-scrim" class="modal-scrim" hidden>
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="borrow-title" aria-describedby="borrow-text">

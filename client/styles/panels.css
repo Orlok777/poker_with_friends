@@ -433,3 +433,22 @@
     opacity: 0;
   }
 }
+
+/* ---------------------------------------------------------- withdraw dialog */
+
+.withdraw-field {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.withdraw-field .num-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+}
+
+.withdraw-field button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}

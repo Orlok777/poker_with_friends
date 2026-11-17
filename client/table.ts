@@ -40,14 +40,14 @@ export function rulesText(st: PublicSettings): string {
 /** "Earnings +250" in green, or in red when negative. */
 export function earningsEl(earnings: number): HTMLElement {
   const el = h('span', earnings > 0 ? 'earnings num is-up' : earnings < 0 ? 'earnings num is-down' : 'earnings num');
-  el.title = 'What you have won or lost at the table. Borrowing and paying back do not change it.';
+  el.title = 'Money you have withdrawn minus the money you borrowed.';
   el.append(h('span', 'earnings-label', 'Earnings'), document.createTextNode(` ${fmtSigned(earnings)}`));
   return el;
 }
 
 const BETTING = new Set(['preflop', 'flop', 'turn', 'river']);
 
-/** In a hand that is still being played, so Reset chips, Pay back and Borrow must wait. */
+/** In a hand that is still being played, so Reset chips, Withdraw and Borrow must wait. */
 export function inLiveHand(s: TableState, p: PlayerView): boolean {
   return p.inHand && s.phase !== 'hand_over' && s.phase !== 'waiting';
 }
@@ -404,7 +404,6 @@ function renderMe(s: TableState, self: PlayerView, counts: Counts, lit: Spotligh
   const chips = h('div', 'me-chips');
   chips.append(h('span', 'num', `${fmt(self.chips)} chips`));
   if (self.debt > 0) chips.append(h('span', 'owes num', `owes ${fmt(self.debt)}`));
-  chips.append(earningsEl(self.earnings));
   info.append(chips);
 
   const handName = h('div', 'my-hand-name');
@@ -418,7 +417,7 @@ function renderMe(s: TableState, self: PlayerView, counts: Counts, lit: Spotligh
   status.append(handName);
   info.append(status);
 
-  // Sit out, reset, pay back and borrow.
+  // Sit out, reset and borrow.
   const tools = h('div', 'my-tools');
   const sit = h('button', self.sittingOut ? 'toggle-btn on' : 'toggle-btn');
   sit.type = 'button';
@@ -428,12 +427,7 @@ function renderMe(s: TableState, self: PlayerView, counts: Counts, lit: Spotligh
   sit.addEventListener('click', () => send({ type: 'sit_out', sittingOut: !self.sittingOut }));
   tools.append(sit);
   const free = !inLiveHand(s, self);
-  if (free && self.debt > 0 && self.chips > 0) {
-    tools.append(
-      toolButton(`Pay back ${fmt(Math.min(self.chips, self.debt))}`, 'Pay your chips towards what you owe', () => send({ type: 'pay_back' })),
-    );
-  }
-  if (free && self.chips === 0) tools.append(toolButton('Borrow chips', 'Borrow a buy-in from the bank', openBorrowPrompt, 'link-btn strong'));
+  if (free && self.chips === 0 && s.settings.allowBorrowing) tools.append(toolButton('Borrow chips', 'Borrow a buy-in from the bank', openBorrowPrompt, 'link-btn strong'));
   if (free) tools.append(toolButton('Reset chips', 'Start over with the starting chips', resetChips));
   info.append(tools);
 

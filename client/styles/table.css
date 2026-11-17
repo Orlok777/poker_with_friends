@@ -1398,3 +1398,41 @@
     --cw: min(48px, calc((100vw - 70px) / 5));
   }
 }
+
+/* ----------------------------------------------- earnings and Withdraw (top left) */
+
+.bar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bank {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bank[hidden] {
+  display: none;
+}
+
+.bank-btn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+@media (max-width: 700px) {
+  .bar-left {
+    gap: 8px;
+  }
+
+  /* The hand number gives way to the money on a phone. */
+  .bar-left .round-label,
+  .bank .earnings-label {
+    display: none;
+  }
+}

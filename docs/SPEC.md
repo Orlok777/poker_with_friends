@@ -6,7 +6,7 @@ Nov 7, 2026 · @cocobanana67
 
 A multiplayer No-Limit Texas Hold'em game for a group of friends, played for fake chips. One friend hosts the server on their Windows PC, and the others join from a browser at the host's IP and port.
 
-This project starts as a copy of **Blackjack with Friends**, which already works. Keep everything that isn't blackjack: the stack, file layout, host token, join screen, waiting room, settings panel, reconnect, kicking, chip store, borrowing, debt, earnings, pay back, reset chips, Share button, sounds, theme, card drawing, phone layout, `HOSTING.md` and the screenshot script. Replace only the game: the rules engine, the round flow, the table screen and the action controls.
+This project starts as a copy of **Blackjack with Friends**, which already works. Keep everything that isn't blackjack: the stack, file layout, host token, join screen, waiting room, settings panel, reconnect, kicking, chip store, borrowing, debt, earnings, withdraw, reset chips, Share button, sounds, theme, card drawing, phone layout, `HOSTING.md` and the screenshot script. Replace only the game: the rules engine, the round flow, the table screen and the action controls.
 
 - The server runs exactly one table: 2 to 9 players and no computer opponent. The server deals the cards; a dealer button moves around the table. There are no lobbies and no lobby codes.
 - The host picks the table settings before the first hand. They are locked once the game starts.
@@ -98,6 +98,7 @@ Differences:
 | Max players | 6 | 2 to 9 |
 | Table password | None | Optional, any text |
 | Starting chips | 1,000 | 100 to 100,000 |
+| Allow borrowing | On | On or off |
 | Small blind | 5 | 1 up to the big blind |
 | Big blind | 10 | The small blind up to starting chips ÷ 10 |
 | Turn timer | 30 s; when it runs out the player checks if they can, otherwise folds | 10 to 120 s, or off |
@@ -107,9 +108,10 @@ Differences:
 The same as the blackjack project, with poker in place of blackjack. Chips are the player's whole stack: everything they have is on the table, and there is no separate buy-in.
 
 - **File, saving, new usernames, allowed usernames, same username twice:** unchanged. Save after each hand is settled and when a player leaves.
-- **Earnings:** go up and down with every settled hand, by what the player won from pots minus what they put in. Borrowing and paying back don't change them.
-- **Reset chips** and **Pay back:** allowed in the waiting room, or at the table while the player is not in the current hand (sitting out, waiting for a seat, or between hands). Refused with `cannot_reset` / `cannot_pay_back` otherwise.
-- **Out of chips:** a player with 0 chips sits out. When a hand ends with them at 0, they get the same in-page borrow prompt as in blackjack. "Borrow" adds the starting-chips amount to their chips and their debt and logs `<name> borrows 1,000 and now owes 1,000`. "Not now" closes it; a Borrow chips button next to their seat opens it again. Borrowing is refused unless the player is seated, has 0 chips and isn't in the current hand (`cannot_borrow`).
+- **Earnings:** the money the player has withdrawn minus the money they have borrowed. Winning or losing hands doesn't change them. Borrowing `B` lowers them by `B`; withdrawing `X` raises them by `X`. Reset chips sets them to 0.
+- **Reset chips** and **Withdraw:** allowed in the waiting room, or at the table while the player is not in the current hand (sitting out, waiting for a seat, or between hands). Refused with `cannot_reset` / `cannot_withdraw` otherwise.
+- **Withdraw:** `{ type: 'withdraw', amount }`, a whole number from 1 to the player's chips (`bad_amount` otherwise). The chips leave the table; they pay the player's debt first and the rest is profit. Debt goes down by the smaller of the amount and the debt; earnings go up by the full amount. Logged as `<name> withdraws 1,500 and pays off 1,000 of their debt`, `<name> withdraws 500` (no debt) or `<name> withdraws 400 and still owes 600`. Example: 3,000 chips, 1,000 debt, earnings -1,000; withdrawing 1,500 leaves 1,500 chips, no debt and earnings +500.
+- **Out of chips:** a player with 0 chips sits out. When a hand ends with them at 0, they get the same in-page borrow prompt as in blackjack, but only when `allowBorrowing` is on. With it off there is no prompt and no Borrow chips button, `borrow` is refused with `borrowing_off`, and the player sits out (Reset chips still works). The host sets it in the Table settings before the game starts. "Borrow" adds the starting-chips amount to their chips and their debt and logs `<name> borrows 1,000 and now owes 1,000`. "Not now" closes it; a Borrow chips button next to their seat opens it again. Borrowing is refused unless the player is seated, has 0 chips and isn't in the current hand (`cannot_borrow`).
 - **Sit out:** a "Sit out next hand" toggle. A player sitting out isn't dealt in and pays no blinds until they turn it off. There are no missed-blind rules in v1. A player whose connection is lost sits out automatically until they come back.
 
 ## Phases and turn order
@@ -139,7 +141,7 @@ The server is the only source of truth. Clients send what the player wants to do
 
 | Type | Payload | Allowed when |
 | --- | --- | --- |
-| `join`, `leave`, `set_ready`, `update_settings`, `start_game`, `reset_chips`, `borrow`, `pay_back`, `kick_player` | As in blackjack | As in blackjack, with the poker timing rules above |
+| `join`, `leave`, `set_ready`, `update_settings`, `start_game`, `reset_chips`, `borrow`, `withdraw`, `kick_player` | As in blackjack | As in blackjack, with the poker timing rules above |
 | `action` | `fold`, `check`, `call`, `bet` + amount, `raise` + amount, or `all_in` | That player's turn |
 | `sit_out` | sittingOut (true or false) | Seated, any time; takes effect from the next hand |
 
@@ -171,12 +173,12 @@ The join and waiting-room screens stay as they are, with the poker settings in t
 - A white "D" dealer tag and small "SB" / "BB" tags on the plates of the button and blind players (heads-up, the dealer is also the small blind, so one plate shows both).
 - The current player's plate is highlighted in amber with a countdown ring and bar for the turn timer. Folded players are dimmed and their cards are pulled away. Sitting-out players show "Sitting out"; a lost connection shows "Disconnected" on a dashed plate.
 - **Felt:** a wide green band with the wooden rail. The chips each player has in front of them this round sit in a row under their nameplate. The center holds the five board-card slots, large, and the pot. With side pots, each pot shows as its own chip stack with its amount ("Main 240", "Side 1 · 80"). Your own chips in front of you sit at the bottom right of the felt.
-- **Dock:** the pot total ("Pot: 1,240", every pot plus all chips in front of the players) and the action bar on the left; your seat on the right: your name, chips, earnings, last action, current hand name ("Pair of sevens", updated on every street) and the Sit out toggle, next to your two cards, face up and large.
+- **Dock:** the pot total ("Pot: 1,240", every pot plus all chips in front of the players) and the action bar on the left; your seat on the right: your name, chips, debt, last action, current hand name ("Pair of sevens", updated on every street) and the Sit out toggle, next to your two cards, face up and large.
 - **Action bar:** Fold, Check or Call 20, and Bet or Raise to, with the amount shown as plain text (it can't be typed), a slider, − and + buttons that step by the small blind, and an All in button. All in keeps the blackjack confirm step ("Confirm all in (1,050)?"). The amount starts at the call amount and only moves within the legal range: the slider and − / + skip the amounts between a call and the minimum raise. Bet or Raise to is enabled once the amount is above the call. There are no keyboard shortcuts: every action is a button press. Buttons are greyed out when it's not your turn or the action isn't allowed. Check is never shown when there is something to call.
 - **Showdown spotlight:** after the board is out and at least two hands reach showdown, the felt dims under a drumroll (generated with Web Audio in `client/sound.ts`, silent when muted), then each hand in turn flies from its seat to a spot in the middle of the felt just above the board, grows large and, if face down, turns over on arrival. The seat stays highlighted for the whole turn. For 2 s the player's name and hand name fade in under the cards, the best five cards (hole and board) are lit and the rest of the board is dimmed; then the cards fly back to the seat and stay face up with the hand name. The flights are FLIP animations measured with `getBoundingClientRect` and are measured again when the window is resized (`client/spotlight.ts`). With reduced motion there is no flight or scaling: the cards fade in at the spotlight spot and fade out, with the same order and timing. Folded hands are never shown, and a hand won by folds has no spotlight.
 - **Winner panel:** after the last spotlight a panel says "Maya wins 1,240 with a full house, kings over sevens". A split pot names every winner and what each gets; with side pots there is a line per pot, side pots first and the main pot last, each lit with the pot's glow and chip movement, and the win or lose jingle plays then. The result stays about 3 s before the next hand.
 - The event log keeps its drawer, with entries such as "Alex raises to 60", "Flop: K♠ 7♦ 2♣", "Sam shows two pair, kings and sevens", "Alex wins 240". Lines about board cards, shown hands and pot wins appear only once the table has shown them, in step with the spotlight. A page that is loaded, reconnected or refreshed shows the full log and the final result at once, with no flights or drumroll.
-- Sit out toggle, Reset chips, Pay back and Borrow chips near your seat; for the host, a kick button on each other player's nameplate.
+- Sit out toggle, Reset chips and Borrow chips near your seat; Earnings and a Withdraw button at the top left of the table screen (the Withdraw button opens an amount dialog with Pay off debt and Max shortcuts); for the host, a kick button on each other player's nameplate.
 - **Phones:** the table must still work on a 390 px-wide phone held upright, with no sideways scrolling. The nameplates become a compact grid of name, action and chips (with any chips in front shown on the plate); the board stays in the middle; your seat sits above the action bar, and your cards and the action buttons stay large and within thumb reach. A 1024 × 700 laptop window must fit without scrolling.
 
 **Sounds:** the same Kenney Casino Audio files. Card dealt and board card: `card-slide-*`. Showdown flip and fold: `card-place-1`. New hand: `card-shuffle`. Bet, call, raise: `chip-lay-*`. Pot pushed to the winner: `chips-handle-5`. All in: the layered all-in sound. Check: a short soft knock generated with Web Audio. Showdown drumroll: a 1 s roll of noise bursts generated with Web Audio, speeding up and getting louder; the cards flying in and back use the card-slide sounds. Win and lose jingles as before, for your own hands only. Mute button unchanged.
@@ -223,12 +225,12 @@ Phase 1 is finished when every item below passes. Claude Code should check each 
 - [ ] `npm install && npm start` works in a fresh copy on Windows, starts on port 3000, and prints the host link and LAN URLs
 - [ ] Hand evaluator tests pass for every hand category, kickers, exact ties, the wheel (A-2-3-4-5) and steel wheel, no wraparound straights, best 5 of 7, and the board playing for a split
 - [ ] Betting engine tests pass for blinds (including heads-up order), min bet, min raise, a short all in that does not reopen betting, the big blind option, uncalled bets returned, a fold win, side pots with three players all in for different amounts, a split pot with an odd chip, and an all-in runout
-- [ ] A chip-conservation test: across many random seeded hands, total chips at the table only change by borrowing
+- [ ] A chip-conservation test: across many random seeded hands, total chips at the table only change by borrowing and withdrawing
 - [ ] An automated test with 3 simulated WebSocket clients plays 5 hands without errors
 - [ ] No message ever contains another player's hole cards before they are shown, or a board card before it is dealt, and the host token never appears in any message
 - [ ] In two browser tabs, the host's setting changes show up for the other player, and settings lock after Start
 - [ ] Two players can play 10 full hands with the correct chip counts after each, and the button and blinds move correctly
-- [ ] Chips, debt and earnings survive a server restart; a new username gets the starting chips; Reset chips, Borrow and Pay back work
+- [ ] Chips, debt and earnings survive a server restart; a new username gets the starting chips; Reset chips, Borrow and Withdraw work, and Borrow is gone when the host turns borrowing off
 - [ ] Sit out works, and a sitting-out player isn't dealt in or charged blinds
 - [ ] A username already at the table and a wrong password are rejected; the host can kick a player, who then can't rejoin with that name
 - [ ] The turn timer checks or folds an idle player
@@ -252,7 +254,7 @@ Hold'em game. Then read the existing code before planning.
 
 Keep everything that isn't blackjack: architecture, file layout, coding
 style, visual design, host token, join screen, waiting room, reconnect,
-kicking, chip store, borrow/debt/earnings/pay back, sounds and HOSTING.md.
+kicking, chip store, borrow/debt/earnings/withdraw, sounds and HOSTING.md.
 Reuse that code; don't rewrite what already works. Replace the rules
 engine, round flow, table screen and action controls with poker.
 Do not build Phase 2 or anything listed under "Out of scope".

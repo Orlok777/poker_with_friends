@@ -35,6 +35,8 @@ export interface Settings {
   /** Empty string means no password. Never sent to clients. */
   password: string;
   startingChips: number;
+  /** When false nobody can borrow chips after going broke. */
+  allowBorrowing: boolean;
   smallBlind: number;
   bigBlind: number;
   /** null turns the turn timer off. */
@@ -48,6 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
   maxPlayers: 6,
   password: '',
   startingChips: 1000,
+  allowBorrowing: true,
   smallBlind: 5,
   bigBlind: 10,
   turnSeconds: 30,
@@ -78,6 +81,7 @@ export function validateSettings(s: Settings): string | null {
   if (!isInt(s.startingChips) || s.startingChips < L.startingChips.min || s.startingChips > L.startingChips.max) {
     return `Starting chips must be ${L.startingChips.min} to ${L.startingChips.max}`;
   }
+  if (typeof s.allowBorrowing !== 'boolean') return 'Allow borrowing must be on or off';
   if (!isInt(s.smallBlind) || s.smallBlind < 1) return 'The small blind must be at least 1';
   if (!isInt(s.bigBlind) || s.bigBlind < s.smallBlind) return 'The big blind can not be smaller than the small blind';
   if (s.bigBlind > maxBigBlind(s.startingChips)) {
@@ -110,7 +114,7 @@ export interface PlayerView {
   connected: boolean;
   /** Chips borrowed to buy back in and not paid back. Net worth is `chips - debt`. */
   debt: number;
-  /** Running profit or loss from the cards since the last reset. Positive or negative. */
+  /** Money withdrawn minus money borrowed since the last reset. Positive or negative. Hands do not change it. */
   earnings: number;
   /** Seat index, or null when watching or waiting for a seat. */
   seat: number | null;
@@ -252,7 +256,7 @@ export type ClientMsg =
   | { type: 'sit_out'; sittingOut: boolean }
   | { type: 'reset_chips' }
   | { type: 'borrow' }
-  | { type: 'pay_back' }
+  | { type: 'withdraw'; amount: number }
   | { type: 'kick_player'; playerId: string };
 
 export type ErrorCode =
@@ -276,7 +280,8 @@ export type ErrorCode =
   | 'unknown_player'
   | 'cannot_reset'
   | 'cannot_borrow'
-  | 'cannot_pay_back';
+  | 'borrowing_off'
+  | 'cannot_withdraw';
 
 export type ServerMsg =
   | { type: 'server_info'; passwordRequired: boolean; seatsFree: boolean; phase: Phase; gameOpen: boolean }
