@@ -11,6 +11,14 @@ import { playAllIn } from './sound.js';
 /** How long the "Confirm all in?" question waits for a second click. */
 const ALL_IN_CONFIRM_MS = 3000;
 
+/** The page title as loaded; on my turn it gets a prefix so a player in another tab notices. */
+const BASE_TITLE = document.title;
+
+function showTurnInTitle(myTurn: boolean): void {
+  const title = myTurn ? `Your turn · ${BASE_TITLE}` : BASE_TITLE;
+  if (document.title !== title) document.title = title;
+}
+
 let actionBusy = false;
 let allInArmed = false;
 let allInTimer: number | null = null;
@@ -129,7 +137,10 @@ export function initControls(): void {
 export function renderControls(): void {
   const s = app.state;
   const self = me();
-  if (!s || !self || !s.started) return;
+  if (!s || !self || !s.started) {
+    showTurnInTitle(false);
+    return;
+  }
 
   const betting = s.phase === 'preflop' || s.phase === 'flop' || s.phase === 'turn' || s.phase === 'river';
   const inPlay = betting && self.inHand && !self.folded && !self.allIn;
@@ -195,6 +206,7 @@ export function renderControls(): void {
   allIn.title = allInArmed ? 'Click again to put in all your chips' : 'Put in all your chips';
 
   $('action-bar').classList.toggle('my-turn', !!l);
+  showTurnInTitle(!!l);
 
   // ---- note
   const note = $('watch-note');

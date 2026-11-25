@@ -204,6 +204,14 @@
   background: var(--accent);
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+  animation: allin-pulse 1s var(--ease) infinite;
+}
+
+/* A soft glow while the all-in question waits for the second click. */
+@keyframes allin-pulse {
+  50% {
+    box-shadow: 0 0 0 7px var(--accent-soft);
+  }
 }
 
 .act-row {
@@ -255,6 +263,11 @@
   .action-btn:hover:not(:disabled),
   .action-bar.my-turn .action-btn:hover:not(:disabled) {
     background: color-mix(in srgb, var(--c) 40%, var(--surface-2));
+  }
+
+  /* On my turn an enabled button lifts a little under the pointer. */
+  .action-bar.my-turn .action-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
   }
 }
 
